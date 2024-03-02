@@ -28,8 +28,8 @@ parser.add_argument(
 )
 
 parser.add_argument("--in_len", type=int, default=20, help="input MTS length (T)")
-parser.add_argument("--out_len", type=int, default=50, help="output MTS length (\tau)")
-parser.add_argument("--seg_len", type=int, default=6, help="segment length (L_seg)")
+parser.add_argument("--out_len", type=int, default=1, help="output MTS length (\tau)")
+parser.add_argument("--seg_len", type=int, default=5, help="segment length (L_seg)")
 parser.add_argument(
     "--win_size", type=int, default=2, help="window size for segment merge"
 )
@@ -41,7 +41,7 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--data_dim", type=int, default=22, help="Number of dimensions of the MTS data (D)"
+    "--data_dim", type=int, default=32, help="Number of dimensions of the MTS data (D)"
 )
 parser.add_argument(
     "--d_model", type=int, default=256, help="dimension of hidden states (d_model)"

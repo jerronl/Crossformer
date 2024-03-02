@@ -24,7 +24,7 @@ warnings.filterwarnings('ignore')
 class Exp_crossformer(Exp_Basic):
     def __init__(self, args):
         super(Exp_crossformer, self).__init__(args)
-    
+
     def _build_model(self):        
         model = Crossformer(
             self.args.data_dim, 
@@ -41,7 +41,7 @@ class Exp_crossformer(Exp_Basic):
             self.args.baseline,
             self.device
         ).float()
-        
+
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
         return model
@@ -75,7 +75,7 @@ class Exp_crossformer(Exp_Basic):
     def _select_optimizer(self):
         model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
         return model_optim
-    
+
     def _select_criterion(self):
         criterion =  nn.MSELoss()
         return criterion
@@ -94,22 +94,21 @@ class Exp_crossformer(Exp_Basic):
         return total_loss
 
     def train(self, setting):
-        train_data, train_loader = self._get_data(flag = 'train')
-        vali_data, vali_loader = self._get_data(flag = 'val')
-        test_data, test_loader = self._get_data(flag = 'test')
+        train_data, train_loader = self._get_data(flag="train")
+        vali_data, vali_loader = self._get_data(flag="val")
+        test_data, test_loader = self._get_data(flag="test")
 
         path = os.path.join(self.args.checkpoints, setting)
         if not os.path.exists(path):
             os.makedirs(path)
         with open(os.path.join(path, "args.json"), 'w') as f:
             json.dump(vars(self.args), f, indent=True)
-        scale_statistic = {'mean': train_data.scaler.mean, 'std': train_data.scaler.std}
         with open(os.path.join(path, "scale_statistic.pkl"), 'wb') as f:
-            pickle.dump(scale_statistic, f)
-        
+            pickle.dump(train_data.scaler, f)
+
         train_steps = len(train_loader)
         early_stopping = EarlyStopping(patience=self.args.patience, verbose=True)
-        
+
         model_optim = self._select_optimizer()
         criterion =  self._select_criterion()
 
@@ -117,18 +116,18 @@ class Exp_crossformer(Exp_Basic):
             time_now = time.time()
             iter_count = 0
             train_loss = []
-            
+
             self.model.train()
             epoch_time = time.time()
             for i, (batch_x,batch_y) in enumerate(train_loader):
                 iter_count += 1
-                
+
                 model_optim.zero_grad()
                 pred, true = self._process_one_batch(
                     train_data, batch_x, batch_y)
-                loss = criterion(pred, true)
+                loss = criterion(pred[:,:,:true.shape[1]], true.reshape((-1,1,true.shape[1])))
                 train_loss.append(loss.item())
-                
+
                 if (i+1) % 100==0:
                     print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
                     speed = (time.time()-time_now)/iter_count
@@ -136,10 +135,10 @@ class Exp_crossformer(Exp_Basic):
                     print('\tspeed: {:.4f}s/iter; left time: {:.4f}s'.format(speed, left_time))
                     iter_count = 0
                     time_now = time.time()
-                
+
                 loss.backward()
                 model_optim.step()
-            
+
             print("Epoch: {} cost time: {}".format(epoch+1, time.time()-epoch_time))
             train_loss = np.average(train_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
@@ -153,24 +152,24 @@ class Exp_crossformer(Exp_Basic):
                 break
 
             adjust_learning_rate(model_optim, epoch+1, self.args)
-            
+
         best_model_path = path+'/'+'checkpoint.pth'
         self.model.load_state_dict(torch.load(best_model_path))
         state_dict = self.model.module.state_dict() if isinstance(self.model, DataParallel) else self.model.state_dict()
         torch.save(state_dict, path+'/'+'checkpoint.pth')
-        
+
         return self.model
 
     def test(self, setting, save_pred = False, inverse = False):
         test_data, test_loader = self._get_data(flag='test')
-        
+
         self.model.eval()
-        
+
         preds = []
         trues = []
         metrics_all = []
         instance_num = 0
-        
+
         with torch.no_grad():
             for i, (batch_x,batch_y) in enumerate(test_loader):
                 pred, true = self._process_one_batch(
@@ -204,7 +203,7 @@ class Exp_crossformer(Exp_Basic):
         return
 
     def _process_one_batch(self, dataset_object, batch_x, batch_y, inverse = False):
-        batch_x = batch_x.float().to(self.device)
+        batch_x = [x.float().to(self.device) for x in batch_x]
         batch_y = batch_y.float().to(self.device)
 
         outputs = self.model(batch_x)
@@ -214,9 +213,9 @@ class Exp_crossformer(Exp_Basic):
             batch_y = dataset_object.inverse_transform(batch_y)
 
         return outputs, batch_y
-    
+
     def eval(self, setting, save_pred = False, inverse = False):
-        #evaluate a saved model
+        # evaluate a saved model
         args = self.args
         data_set = Dataset_MTS(
             root_path=args.root_path,
@@ -234,14 +233,14 @@ class Exp_crossformer(Exp_Basic):
             shuffle=False,
             num_workers=args.num_workers,
             drop_last=False)
-        
+
         self.model.eval()
-        
+
         preds = []
         trues = []
         metrics_all = []
         instance_num = 0
-        
+
         with torch.no_grad():
             for i, (batch_x,batch_y) in enumerate(data_loader):
                 pred, true = self._process_one_batch(

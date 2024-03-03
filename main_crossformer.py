@@ -106,22 +106,15 @@ if args.use_gpu and args.use_multi_gpu:
     print(args.gpu)
 
 data_parser = {
-    "ETTh1": {
-        "data": "ETTh1.csv",
-        "data_dim": 7,
-        "split": [12 * 30 * 24, 4 * 30 * 24, 4 * 30 * 24],
+    "vols": {
+        "patience": 30,
+        "train_epochs": 100,
     },
-    # "vols": {
-    #     "data": tables,
-    #     "data_dim": 22,
-        # "split": [4 * 12 * 30 * 24, 4 * 4 * 30 * 24, 4 * 4 * 30 * 24],
-    # },
 }
 if args.data in data_parser.keys():
     data_info = data_parser[args.data]
-    args.data_path = data_info["data"]
-    args.data_dim = data_info["data_dim"]
-    args.data_split = data_info["split"]
+    for k,v in data_info.items():
+        args.__setattr__(k,v)
 else:
     args.data_split = string_split(args.data_split)
 

@@ -26,7 +26,7 @@ def cyclic_encode(original, period):
     ]
 
 def cyclic_t(x):
-    assert x.dtype == np.float
+    assert np.issubdtype(x.dtype, np.floating)
     
     t = np.vectorize(lambda x: (epoch0 + timedelta(days=x)).timetuple())(x)
     tm_yday = cyclic_encode(

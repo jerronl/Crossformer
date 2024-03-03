@@ -115,7 +115,7 @@ if args.data in data_parser.keys():
     data_info = data_parser[args.data]
     for k,v in data_info.items():
         args.__setattr__(k,v)
-else:
+if isinstance(args.data_split, str) :
     args.data_split = string_split(args.data_split)
 
 print("Args in experiment:")

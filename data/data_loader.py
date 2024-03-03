@@ -131,7 +131,7 @@ class DatasetMTS(Dataset):
             x = (x - scaler_np.mean[ivs]) / scaler_np.std[ivs]
             xvs.append(np.concatenate([x, c,], axis=1))
             xvsp.append(scaler_p.transform(df_raw["spot"].values).reshape(-1, 1))
-            y[i] = scaler_y.transform(y[i])
+            y[i] = (scaler_y.transform(y[i]).reshape(-1,1,y[i].shape[1]),y[i][:,0]-1)
         self.data = [
             (scaler_np, scaler_p, scaler_y, ),
             (idat, icyc, ivs, ),
@@ -151,7 +151,7 @@ class DatasetMTS(Dataset):
         _, xnp, cyclic, xpc, xvs, xvsp, y, = self.data[2][self.set_type]
 
         seq_x = xnp[index], cyclic[index], xpc[index], xvs[index], xvsp[index]
-        seq_y = y[index]
+        seq_y = y[0][index],y[1][index]
 
         return seq_x, seq_y
 
@@ -159,4 +159,4 @@ class DatasetMTS(Dataset):
         return self.shape[0]
 
     def inverse_transform(self, data):
-        return self.scaler[2].inverse_transform(data)
+        return self.scaler[2].inverse_transform(data[0]),data[1]

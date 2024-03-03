@@ -44,6 +44,9 @@ parser.add_argument(
     "--data_dim", type=int, default=32, help="Number of dimensions of the MTS data (D)"
 )
 parser.add_argument(
+    "--out_dim", type=int, default=3*4+4+22, help="Number of dimensions of the output"
+)
+parser.add_argument(
     "--d_model", type=int, default=256, help="dimension of hidden states (d_model)"
 )
 parser.add_argument(
@@ -82,6 +85,7 @@ parser.add_argument(
 )
 
 parser.add_argument("--use_gpu", type=bool, default=True, help="use gpu")
+# parser.add_argument("--use_gpu", type=bool, default=False, help="use gpu")
 parser.add_argument("--gpu", type=int, default=0, help="gpu")
 parser.add_argument(
     "--use_multi_gpu", action="store_true", help="use multiple gpus", default=False

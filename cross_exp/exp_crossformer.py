@@ -12,6 +12,7 @@ import torch.nn as nn
 from torch import optim
 from torch.utils.data import DataLoader
 from torch.nn import DataParallel
+import torch.nn.functional as F
 
 import os
 import time
@@ -21,6 +22,19 @@ import pickle
 import warnings
 warnings.filterwarnings('ignore')
 
+y_cat = 22
+def cross_entropy_mse_loss_with_nans(input, target):
+    assert input.shape[1] == 1
+    tv, tc = target
+    iv, ic = input[:, :, :-y_cat], input[:, 0, -y_cat:]
+    mi = torch.isnan(iv)
+    mask = torch.isnan(tv) | mi
+    mc = torch.isnan(ic).any(dim=1)
+    return (F.mse_loss(iv[~mask], tv[~mask]) ** 0.5) * 10 \
+        + F.cross_entropy(ic[~mc], tc[~mc]) \
+        + (mi.sum() + mc.sum()) / target[0].numel()
+
+
 class Exp_crossformer(Exp_Basic):
     def __init__(self, args):
         super(Exp_crossformer, self).__init__(args)
@@ -28,6 +42,7 @@ class Exp_crossformer(Exp_Basic):
     def _build_model(self):        
         model = Crossformer(
             self.args.data_dim, 
+            self.args.out_dim, 
             self.args.in_len, 
             self.args.out_len,
             self.args.seg_len,
@@ -77,8 +92,8 @@ class Exp_crossformer(Exp_Basic):
         return model_optim
 
     def _select_criterion(self):
-        criterion =  nn.MSELoss()
-        return criterion
+        # criterion =  nn.MSELoss()
+        return cross_entropy_mse_loss_with_nans
 
     def vali(self, vali_data, vali_loader, criterion):
         self.model.eval()
@@ -87,7 +102,7 @@ class Exp_crossformer(Exp_Basic):
             for i, (batch_x,batch_y) in enumerate(vali_loader):
                 pred, true = self._process_one_batch(
                     vali_data, batch_x, batch_y)
-                loss = criterion(pred.detach().cpu(), true.detach().cpu())
+                loss = criterion(pred, true)
                 total_loss.append(loss.detach().item())
         total_loss = np.average(total_loss)
         self.model.train()
@@ -125,7 +140,7 @@ class Exp_crossformer(Exp_Basic):
                 model_optim.zero_grad()
                 pred, true = self._process_one_batch(
                     train_data, batch_x, batch_y)
-                loss = criterion(pred[:,:,:true.shape[1]], true.reshape((-1,1,true.shape[1])))
+                loss = criterion(pred, true)
                 train_loss.append(loss.item())
 
                 if (i+1) % 100==0:
@@ -176,7 +191,7 @@ class Exp_crossformer(Exp_Basic):
                     test_data, batch_x, batch_y, inverse)
                 batch_size = pred.shape[0]
                 instance_num += batch_size
-                batch_metric = np.array(metric(pred.detach().cpu().numpy(), true.detach().cpu().numpy())) * batch_size
+                batch_metric = np.array(metric(pred, true)) * batch_size
                 metrics_all.append(batch_metric)
                 if (save_pred):
                     preds.append(pred.detach().cpu().numpy())
@@ -190,10 +205,10 @@ class Exp_crossformer(Exp_Basic):
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
-        mae, mse, rmse, mape, mspe = metrics_mean
+        mae, mse, rmse, mape, mspe, accr = metrics_mean
         print('mse:{}, mae:{}'.format(mse, mae))
 
-        np.save(folder_path+'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
+        np.save(folder_path+'metrics.npy', np.array([mae, mse, rmse, mape, mspe, accr]))
         if (save_pred):
             preds = np.concatenate(preds, axis = 0)
             trues = np.concatenate(trues, axis = 0)
@@ -204,7 +219,7 @@ class Exp_crossformer(Exp_Basic):
 
     def _process_one_batch(self, dataset_object, batch_x, batch_y, inverse = False):
         batch_x = [x.float().to(self.device) for x in batch_x]
-        batch_y = batch_y.float().to(self.device)
+        batch_y = batch_y[0].float().to(self.device),batch_y[1].type(torch.LongTensor).to(self.device)
 
         outputs = self.model(batch_x)
 

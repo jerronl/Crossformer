@@ -11,6 +11,6 @@ def data_columns(data):
         'vnp':[ 'vs','dtm','vm',            ],
         'cyc':[['e2d', 70] ,['dtm0', 5],    ],
         'opc':[ 'close', 'hi', 'lo',        ],
-        'y' : [ 'opc','cat','vm'            ],
+        'y' : [ 'cat', 'opc', 'vm',         ],
     },
     }[data]

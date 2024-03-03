@@ -1,4 +1,5 @@
 import numpy as np
+from sklearn.metrics import accuracy_score
 
 def RSE(pred, true):
     return np.sqrt(np.sum((true-pred)**2)) / np.sqrt(np.sum((true-true.mean())**2))
@@ -23,11 +24,15 @@ def MAPE(pred, true):
 def MSPE(pred, true):
     return np.mean(np.square((pred - true) / true))
 
+y_cat=22
 def metric(pred, true):
-    mae = MAE(pred, true)
-    mse = MSE(pred, true)
-    rmse = RMSE(pred, true)
-    mape = MAPE(pred, true)
-    mspe = MSPE(pred, true)
+    tv, tc = true[0].detach().cpu().numpy(),true[1].detach().cpu().numpy()
+    iv, ic = pred[:, :, :-y_cat].detach().cpu().numpy(), pred[:, 0, -y_cat:].detach().cpu().numpy()
+    mae = MAE(iv, tv)
+    mse = MSE(iv, tv)
+    rmse = RMSE(iv, tv)
+    mape = MAPE(iv, tv)
+    mspe = MSPE(iv, tv)
+    accr = accuracy_score(np.argmax(ic,axis=1),tc)
     
-    return mae,mse,rmse,mape,mspe
+    return mae,mse,rmse,mape,mspe,accr

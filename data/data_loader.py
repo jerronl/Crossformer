@@ -3,8 +3,8 @@
 import warnings
 import os
 import pandas as pd, numpy as np
-from utils.tools import StandardScaler
-from einops import rearrange
+from sklearn.preprocessing import StandardScaler
+# from einops import rearrange
 from torch.utils.data import Dataset
 from datetime import datetime, timedelta
 from data.data_def import data_columns
@@ -84,8 +84,8 @@ class DatasetMTS(Dataset):
         df_raws = [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
         for table in self.data_path:
             df = pd.read_csv(os.path.join(self.root_path, table))
-            df["date"] = np.vectorize(excel_date)(df["date"])
             df=df.replace(-99999,float('nan'))
+            df["date"] = np.vectorize(excel_date)(df["date"])
             for i, df_raw in enumerate(df_raws):
                 df_raws[i] = pd.concat(
                     [df_raw,
@@ -102,8 +102,9 @@ class DatasetMTS(Dataset):
         xnp, xpc, xvsp, xvs, y, cyclics= [], [], [], [], [], []
         for df_raw in df_raws:
             xnp.append(df_raw[vnpt].values.reshape((-1,len(vnp))))
-            xpc.append(df_raw[vpct].values.reshape((-1)))
+            xpc.append(df_raw[vpct].values.reshape((-1,1)))
             y.append(df_raw[vy].values)
+            assert np.isnan(xnp[-1]).sum()==0 and np.isnan(xpc[-1]).sum()==0
         scaler_np, scaler_p, scaler_y = StandardScaler(), StandardScaler(), StandardScaler(), 
         scaler_np.fit(xnp[0])
         scaler_p.fit(xpc[0])
@@ -128,9 +129,9 @@ class DatasetMTS(Dataset):
             c = np.concatenate(
                 cyclic_t(x[:, idatv]) + cyclic_encode(x[:, icyc[0]], icyc[1]), axis=1
             )
-            x = (x - scaler_np.mean[ivs]) / scaler_np.std[ivs]
+            x = (x - scaler_np.mean_[ivs]) / scaler_np.scale_[ivs]
             xvs.append(np.concatenate([x, c,], axis=1))
-            xvsp.append(scaler_p.transform(df_raw["spot"].values).reshape(-1, 1))
+            xvsp.append(scaler_p.transform(df_raw["spot"].values.reshape(-1, 1)))
             y[i] = (scaler_y.transform(y[i]).reshape(-1,1,y[i].shape[1]),y[i][:,0]-1)
         self.data = [
             (scaler_np, scaler_p, scaler_y, ),

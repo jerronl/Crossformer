@@ -1,11 +1,21 @@
+tables = ['volvN.csv', 'volvT.csv', 'volvA.csv', 'volvG.csv', ]
+mydrive = "E:/mydoc/git/trade/analyics/"
+
+data_parser = {
+#     "vols": {
+#         "patience":30,
+#         "train_epochs":100,
+#         'data_split':[0.7,0.1,0.2],
+#         'batch_size':512,
+#     },
+    }
+
 import argparse
 import torch
 
 from cross_exp.exp_crossformer import Exp_crossformer
 from utils.tools import string_split
 
-tables = ["volvA.csv"]
-mydrive = "E:/mydoc/git/trade/analyics/"
 
 parser = argparse.ArgumentParser(description="CrossFormer")
 
@@ -105,12 +115,6 @@ if args.use_gpu and args.use_multi_gpu:
     args.gpu = args.device_ids[0]
     print(args.gpu)
 
-data_parser = {
-    "vols": {
-        "patience": 30,
-        "train_epochs": 100,
-    },
-}
 if args.data in data_parser.keys():
     data_info = data_parser[args.data]
     for k,v in data_info.items():

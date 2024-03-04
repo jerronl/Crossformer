@@ -141,6 +141,7 @@ class Exp_crossformer(Exp_Basic):
                 pred, true = self._process_one_batch(
                     train_data, batch_x, batch_y)
                 loss = criterion(pred, true)
+                assert ~torch.isnan(loss)
                 train_loss.append(loss.item())
 
                 if (i+1) % 100==0:

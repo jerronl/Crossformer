@@ -1,4 +1,5 @@
 tables = ['volvN.csv', 'volvT.csv', 'volvA.csv', 'volvG.csv', ]
+tables = ['volvG.csv', ]
 mydrive = "E:/mydoc/git/trade/analyics/"
 
 data_parser = {
@@ -95,6 +96,7 @@ parser.add_argument(
 )
 
 parser.add_argument("--use_gpu", type=bool, default=True, help="use gpu")
+parser.add_argument("--resume", type=bool, default=True, help="resume")
 # parser.add_argument("--use_gpu", type=bool, default=False, help="use gpu")
 parser.add_argument("--gpu", type=int, default=0, help="gpu")
 parser.add_argument(

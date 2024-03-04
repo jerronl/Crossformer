@@ -126,7 +126,14 @@ class Exp_crossformer(Exp_Basic):
 
         model_optim = self._select_optimizer()
         criterion =  self._select_criterion()
-
+        if self.args.resume:
+            best_model_path = path+'/'+'checkpoint.pth'
+            try:
+                checkpoint=torch.load(best_model_path)
+                self.model.load_state_dict(checkpoint[0])
+                model_optim.load_state_dict(checkpoint[1])
+            except:
+                print('failed to load',best_model_path)
         for epoch in range(self.args.train_epochs):
             time_now = time.time()
             iter_count = 0
@@ -162,7 +169,7 @@ class Exp_crossformer(Exp_Basic):
 
             print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
                 epoch + 1, train_steps, train_loss, vali_loss, test_loss))
-            early_stopping(vali_loss, self.model, path)
+            early_stopping(vali_loss, self.model, model_optim, path)
             if early_stopping.early_stop:
                 print("Early stopping")
                 break
@@ -170,9 +177,10 @@ class Exp_crossformer(Exp_Basic):
             adjust_learning_rate(model_optim, epoch+1, self.args)
 
         best_model_path = path+'/'+'checkpoint.pth'
-        self.model.load_state_dict(torch.load(best_model_path))
+        checkpoint=torch.load(best_model_path)
+        self.model.load_state_dict(checkpoint[0])
         state_dict = self.model.module.state_dict() if isinstance(self.model, DataParallel) else self.model.state_dict()
-        torch.save(state_dict, path+'/'+'checkpoint.pth')
+        torch.save((state_dict,checkpoint[1]), path+'/'+'checkpoint.pth')
 
         return self.model
 

@@ -84,7 +84,8 @@ class DatasetMTS(Dataset):
         df_raws = [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
         for table in self.data_path:
             df = pd.read_csv(os.path.join(self.root_path, table))
-            df=df.replace(-99999,float('nan'))
+            df = df.replace(-99999, float("nan"))
+            df = df[~df["dtm0"].isna()]
             df["date"] = np.vectorize(excel_date)(df["date"])
             for i, df_raw in enumerate(df_raws):
                 df_raws[i] = pd.concat(
@@ -133,6 +134,9 @@ class DatasetMTS(Dataset):
             xvs.append(np.concatenate([x, c,], axis=1))
             xvsp.append(scaler_p.transform(df_raw["spot"].values.reshape(-1, 1)))
             y[i] = (scaler_y.transform(y[i]).reshape(-1,1,y[i].shape[1]),y[i][:,0]-1)
+            assert np.isnan(xnp[i]).sum()==0 and np.isnan(xpc[i]).sum()==0 and \
+                np.isnan(cyclics[-1]).sum()==0 and np.isnan(xvs[-1]).sum()==0 and \
+                    np.isnan(xvsp[-1]).sum()==0
         self.data = [
             (scaler_np, scaler_p, scaler_y, ),
             (idat, icyc, ivs, ),

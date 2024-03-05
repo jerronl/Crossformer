@@ -3,3 +3,4 @@
 *.pyc
 
 args.json
+*.npy

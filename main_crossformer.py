@@ -25,17 +25,9 @@ parser.add_argument(
     "--root_path", type=str, default=mydrive, help="root path of the data file"
 )
 parser.add_argument("--data_path", type=list, default=tables, help="data file")
-parser.add_argument(
-    "--data_split",
-    type=str,
-    default="0.7,0.1,0.2",
-    help="train/val/test split, can be ratio or number",
+parser.add_argument("--data_split",type=str,default="0.7,0.1,0.2",help="train/val/test split, can be ratio or number",
 )
-parser.add_argument(
-    "--checkpoints",
-    type=str,
-    default="./checkpoints/",
-    help="location to store model checkpoints",
+parser.add_argument("--checkpoints",type=str,default="./checkpoints/",help="location to store model checkpoints",
 )
 
 parser.add_argument("--in_len", type=int, default=20, help="input MTS length (T)")
@@ -44,11 +36,7 @@ parser.add_argument("--seg_len", type=int, default=5, help="segment length (L_se
 parser.add_argument(
     "--win_size", type=int, default=2, help="window size for segment merge"
 )
-parser.add_argument(
-    "--factor",
-    type=int,
-    default=10,
-    help="num of routers in Cross-Dimension Stage of TSA (c)",
+parser.add_argument("--factor",type=int,default=10,help="num of routers in Cross-Dimension Stage of TSA (c)",
 )
 
 parser.add_argument(
@@ -97,6 +85,7 @@ parser.add_argument(
 
 parser.add_argument("--use_gpu", type=bool, default=True, help="use gpu")
 parser.add_argument("--resume", type=bool, default=True, help="resume")
+parser.add_argument("--cutday", type=str, default=None, help="resume")
 # parser.add_argument("--use_gpu", type=bool, default=False, help="use gpu")
 parser.add_argument("--gpu", type=int, default=0, help="gpu")
 parser.add_argument(
@@ -117,20 +106,16 @@ if args.use_gpu and args.use_multi_gpu:
     args.gpu = args.device_ids[0]
     print(args.gpu)
 
-if args.data in data_parser.keys():
-    data_info = data_parser[args.data]
-    for k,v in data_info.items():
-        args.__setattr__(k,v)
-if isinstance(args.data_split, str) :
-    args.data_split = string_split(args.data_split)
+def update_args():
+    if args.data in data_parser.keys():
+        data_info = data_parser[args.data]
+        for k,v in data_info.items():
+            args.__setattr__(k,v)
+    if isinstance(args.data_split, str) :
+        args.data_split = string_split(args.data_split)
 
-print("Args in experiment:")
-print(args)
-
-Exp = Exp_crossformer
-
-for ii in range(args.itr):
-    # setting record of experiments
+    print("Args in experiment:")
+    print(args)
     setting = "Crossformer_{}_il{}_ol{}_sl{}_win{}_fa{}_dm{}_nh{}_el{}_itr{}".format(
         args.data,
         args.in_len,
@@ -141,8 +126,32 @@ for ii in range(args.itr):
         args.d_model,
         args.n_heads,
         args.e_layers,
-        ii,
+        0,
     )
+    return setting
+
+Exp = Exp_crossformer
+data_parser = {
+    "vols": {
+#         "patience":30,
+#         "train_epochs":1000,
+        'data_split':[0.7,0.1,0.2],
+        'batch_size':32,
+        'cutday':'#2024-02-01',
+    },
+    }
+data_parser = {
+    "vols": {
+        "patience":30,
+        "train_epochs":500,
+        'data_split':[0.7,0.1,0.2],
+        'batch_size':32,
+    },
+    }
+
+for ii in range(args.itr):
+    # setting record of experiments
+    setting = update_args()
 
     exp = Exp(args)  # set experiments
     print(f">>>>>>>start training : {setting}>>>>>>>>>>>>>>>>>>>>>>>>>>")

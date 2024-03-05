@@ -26,6 +26,8 @@ def cyclic_encode(original, period):
     ]
 
 def cyclic_t(x):
+    if len(x)<1:
+        return [pd.DataFrame()]
     assert np.issubdtype(x.dtype, float)
     
     t = np.vectorize(lambda x: (epoch0 + timedelta(days=x)).timetuple())(x)
@@ -56,7 +58,8 @@ class DatasetMTS(Dataset):
         flag="train",
         # size=None,
         data_split=None,
-        # scale=True,
+        cutday=False,
+        scaler=None,
         # scale_statistic=None,
     ):
         if data_split is None:
@@ -73,25 +76,37 @@ class DatasetMTS(Dataset):
         self.data_split = np.cumsum([0] + data_split)
         # self.scale_statistic = scale_statistic
         self.data_name = data_name
+        self.cutday=cutday
+        self.scaler=scaler
         self.__read_data__()
         self.shape=self.data[2][self.set_type][0]
         self.scaler=self.data[0]
 
     def __read_data__(self):
-        if self.data_name in self.datas:
-            self.data = self.__class__.datas[self.data_name]
+        if self.data_name + str(self.data_path) in self.datas:
+            self.data = self.__class__.datas[self.data_name + str(self.data_path)]
             return
         df_raws = [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
         for table in self.data_path:
             df = pd.read_csv(os.path.join(self.root_path, table))
+            if self.cutday is not None:
+                df["day"] = pd.to_datetime(df["date"].str.replace("#", "")).dt.date
+                df['horizon']=df[f"e2d_{self.in_len}"]-df["e2d"]
+                lasttime = df.groupby(["day"])["date"].max().values
+                df = df[(df["date"] > self.cutday) & (df["date"].isin(lasttime)) &
+                        (df['horizon'] > 0)].sort_values(
+                            by=['horizon','day',f"e2d_{self.in_len}"])
             df = df.replace(-99999, float("nan"))
             df = df[~df["dtm0"].isna()]
             df["date"] = np.vectorize(excel_date)(df["date"])
-            for i, df_raw in enumerate(df_raws):
-                df_raws[i] = pd.concat(
-                    [df_raw,
-                     df.iloc[int(self.data_split[i] * len(df)):
-                         int(self.data_split[i + 1] * len(df))],])
+            if self.cutday is None:
+                for i, df_raw in enumerate(df_raws):
+                    df_raws[i] = pd.concat(
+                        [df_raw,
+                        df.iloc[int(self.data_split[i] * len(df)):
+                            int(self.data_split[i + 1] * len(df))],])
+            else:
+                df_raws[self.set_type] = pd.concat([df_raws[2],df])
         # df_raws = [df_raw.sort_values(by="date") for df_raw in df_raws]
         cols = data_columns(self.data_name)
         vnp = [c for s in cols["vnp"] for c in cols[s]]        # vnp.sort()
@@ -101,42 +116,53 @@ class DatasetMTS(Dataset):
         vy = [c for s in cols["y"] for c in cols[s]] 
         vpct= [f"{var}_{i}" for i in range(1, self.in_len + 1) for var in vpc]
         xnp, xpc, xvsp, xvs, y, cyclics= [], [], [], [], [], []
-        for df_raw in df_raws:
-            xnp.append(df_raw[vnpt].values.reshape((-1,len(vnp))))
-            xpc.append(df_raw[vpct].values.reshape((-1,1)))
+        for i, df_raw in enumerate(df_raws):
+            if len(df_raw.columns) < 1:
+                df_raw = pd.DataFrame(columns=df_raws[self.set_type].columns)
+                df_raws[i] = df_raw
+            xnp.append(df_raw[vnpt].values.reshape((-1, len(vnp))))
+            xpc.append(df_raw[vpct].values.reshape((-1, 1)))
             y.append(df_raw[vy].values)
-            assert np.isnan(xnp[-1]).sum()==0 and np.isnan(xpc[-1]).sum()==0
-        scaler_np, scaler_p, scaler_y = StandardScaler(), StandardScaler(), StandardScaler(), 
-        scaler_np.fit(xnp[0])
-        scaler_p.fit(xpc[0])
-        scaler_y.fit(y[0])
+            assert len(xnp[-1])<1 or np.isnan(xnp[-1]).sum()==0 and np.isnan(xpc[-1]).sum()==0
+        if self.scaler is None:
+            scaler_np, scaler_p, scaler_y = (StandardScaler(), StandardScaler(), StandardScaler(),) 
+            scaler_np.fit(xnp[0])
+            scaler_p.fit(xpc[0])
+            scaler_y.fit(y[0])
+        else:
+            scaler_np, scaler_p, scaler_y = self.scaler 
         ivs = [vnp.index(v) for v in vvs]
         idat = [vnp.index(v) for v in cols["date"]]
         idatv= [vvs.index(v) for v in cols["date"]]
         icyc = [[vnp.index(v) for v,c in cols["cyc"]],
                 [ c for v, c in cols["cyc"]]]
         for i, df_raw in enumerate(df_raws):
-            c=np.concatenate(cyclic_t(xnp[i][:,idat]) +
-                             cyclic_encode(xnp[i][:,icyc[0]],icyc[1]),axis=1)
-            xx = scaler_np.transform(xnp[i]).reshape((-1, self.in_len, len(vnp)))
-            cyclics.append(np.concatenate([
-                xx[:,:,:len(ivs)],
-                c.reshape((-1,self.in_len,c.shape[1])),
-                ],axis=2))
-            xnp[i] = xx[:, :, len(ivs) :]
-            xpc[i] = scaler_p.transform(xpc[i]).reshape(
-                (-1, self.in_len, len(vpc)))
-            x = df_raw[vvs].values
-            c = np.concatenate(
-                cyclic_t(x[:, idatv]) + cyclic_encode(x[:, icyc[0]], icyc[1]), axis=1
-            )
-            x = (x - scaler_np.mean_[ivs]) / scaler_np.scale_[ivs]
-            xvs.append(np.concatenate([x, c,], axis=1))
-            xvsp.append(scaler_p.transform(df_raw["spot"].values.reshape(-1, 1)))
-            y[i] = (scaler_y.transform(y[i]).reshape(-1,1,y[i].shape[1]),y[i][:,0]-1)
-            assert np.isnan(xnp[i]).sum()==0 and np.isnan(xpc[i]).sum()==0 and \
-                np.isnan(cyclics[-1]).sum()==0 and np.isnan(xvs[-1]).sum()==0 and \
-                    np.isnan(xvsp[-1]).sum()==0
+            if len(xnp[i])<1:
+                cyclics.append([])
+                xvs.append([])
+                xvsp.append([])
+            else:
+                c=np.concatenate(cyclic_t(xnp[i][:,idat]) +
+                                cyclic_encode(xnp[i][:,icyc[0]],icyc[1]),axis=1)
+                xx = scaler_np.transform(xnp[i]).reshape((-1, self.in_len, len(vnp)))
+                cyclics.append(np.concatenate([
+                    xx[:,:,:len(ivs)],
+                    c.reshape((-1,self.in_len,c.shape[1])),
+                    ],axis=2))
+                xnp[i] = xx[:, :, len(ivs) :]
+                xpc[i] = scaler_p.transform(xpc[i]).reshape(
+                    (-1, self.in_len, len(vpc)))
+                x = df_raw[vvs].values
+                c = np.concatenate(
+                    cyclic_t(x[:, idatv]) + cyclic_encode(x[:, icyc[0]], icyc[1]), axis=1
+                )
+                x = (x - scaler_np.mean_[ivs]) / scaler_np.scale_[ivs]
+                xvs.append(np.concatenate([x, c,], axis=1))
+                xvsp.append(scaler_p.transform(df_raw["spot"].values.reshape(-1, 1)))
+                y[i] = (scaler_y.transform(y[i]).reshape(-1,1,y[i].shape[1]),y[i][:,0]-1)
+                assert np.isnan(xnp[i]).sum()==0 and np.isnan(xpc[i]).sum()==0 and \
+                    np.isnan(cyclics[-1]).sum()==0 and np.isnan(xvs[-1]).sum()==0 and \
+                        np.isnan(xvsp[-1]).sum()==0
         self.data = [
             (scaler_np, scaler_p, scaler_y, ),
             (idat, icyc, ivs, ),
@@ -150,7 +176,7 @@ class DatasetMTS(Dataset):
                     y,
                 )),
         ]
-        self.__class__.datas[self.data_name] = self.data
+        self.__class__.datas[self.data_name + str(self.data_path)] = self.data
 
     def __getitem__(self, index): 
         _, xnp, cyclic, xpc, xvs, xvsp, y, = self.data[2][self.set_type]

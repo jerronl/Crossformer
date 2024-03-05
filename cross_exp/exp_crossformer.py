@@ -132,6 +132,7 @@ class Exp_crossformer(Exp_Basic):
                 checkpoint=torch.load(best_model_path)
                 self.model.load_state_dict(checkpoint[0])
                 model_optim.load_state_dict(checkpoint[1])
+                print('suc to load',best_model_path)
             except:
                 print('failed to load',best_model_path)
         for epoch in range(self.args.train_epochs):

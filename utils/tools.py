@@ -30,13 +30,13 @@ class EarlyStopping:
         self.delta = delta
 
     def __call__(self, val_loss, model, path):
-        score = -val_loss
+        score = val_loss
         if self.best_score is None:
             self.best_score = score
             self.save_checkpoint(val_loss, model, path)
-        elif score < self.best_score + self.delta:
+        elif score > self.best_score + self.delta:
             self.counter += 1
-            print(f"EarlyStopping counter: {self.counter} out of {self.patience}")
+            print(f"EarlyStopping counter: {self.counter} out of {self.patience} score {score} best {self.best_score}")
             if self.counter >= self.patience:
                 self.early_stop = True
         else:

@@ -190,4 +190,6 @@ class DatasetMTS(Dataset):
         return self.shape[0]
 
     def inverse_transform(self, data):
-        return self.scaler[2].inverse_transform(data[0]),data[1]
+        if isinstance(data,tuple):
+            data=data[0]
+        return self.scaler[2].inverse_transform(data[:,:,:16].cpu())

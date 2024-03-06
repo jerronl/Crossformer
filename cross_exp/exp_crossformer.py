@@ -144,9 +144,9 @@ class Exp_crossformer(Exp_Basic):
                 checkpoint = torch.load(best_model_path)
                 self.model.load_state_dict(checkpoint[0][0])
                 model_optim.load_state_dict(checkpoint[0][1])
-                score = -checkpoint[1]
+                score = abs(checkpoint[1])
                 spoch = checkpoint[0][2]
-                print("suc to load", best_model_path)
+                print(f"suc to load. score {score} epoch {spoch} from:", best_model_path)
             except:
                 print("failed to load", best_model_path)
         early_stopping = EarlyStopping(

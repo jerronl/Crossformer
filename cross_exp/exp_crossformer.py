@@ -201,12 +201,7 @@ class Exp_crossformer(Exp_Basic):
             )
             early_stopping(
                 vali_loss,
-                (
-                    self.model.state_dict(),
-                    model_optim.state_dict(),
-                    epoch,
-                    train_data.scaler,
-                ),
+                (self.model.state_dict(),model_optim.state_dict(),epoch,train_data.scaler,),
                 path,
             )
             if early_stopping.early_stop:
@@ -258,8 +253,16 @@ class Exp_crossformer(Exp_Basic):
                 batch_metric = np.array(metric(pred, true)) * batch_size
                 metrics_all.append(batch_metric)
                 if save_pred:
-                    preds.append(pred.detach().cpu().numpy())
-                    trues.append(true[0].detach().cpu().numpy())
+                    preds.append(
+                        pred
+                        if isinstance(pred, np.ndarray)
+                        else pred.detach().cpu().numpy()
+                    )
+                    trues.append(
+                        true[0]
+                        if isinstance(true[0], np.ndarray)
+                        else true[0].detach().cpu().numpy()
+                    )
 
         metrics_all = np.stack(metrics_all, axis=0)
         metrics_mean = metrics_all.sum(axis=0) / instance_num

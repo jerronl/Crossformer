@@ -26,13 +26,21 @@ def MSPE(pred, true):
 
 y_cat=22
 def metric(pred, true):
-    tv, tc = true[0].detach().cpu().numpy(),true[1].detach().cpu().numpy()
-    iv, ic = pred[:, :, :-y_cat].detach().cpu().numpy(), pred[:, 0, -y_cat:].detach().cpu().numpy()
+    tv, tc = true if isinstance(true[0], np.ndarray) else (
+        true[0].detach().cpu().numpy(),true[1].detach().cpu().numpy())
+    iv, ic = (
+        (pred[:, :-y_cat], pred[:, -y_cat:])
+        if isinstance(pred, np.ndarray)
+        else (
+            pred[:, :, :-y_cat].detach().cpu().numpy(),
+            pred[:, 0, -y_cat:].detach().cpu().numpy(),
+        )
+    )
     mae = MAE(iv, tv)
     mse = MSE(iv, tv)
     rmse = RMSE(iv, tv)
     mape = MAPE(iv, tv)
     mspe = MSPE(iv, tv)
     accr = accuracy_score(np.argmax(ic,axis=1),tc)
-    
+
     return mae,mse,rmse,mape,mspe,accr

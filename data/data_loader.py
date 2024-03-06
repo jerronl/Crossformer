@@ -190,6 +190,8 @@ class DatasetMTS(Dataset):
         return self.shape[0]
 
     def inverse_transform(self, data):
-        if isinstance(data,tuple):
-            data=data[0]
-        return self.scaler[2].inverse_transform(data[:,:,:16].cpu())
+        dt = data[0].cpu() if isinstance(data, (tuple, list)) else data.cpu()
+        w=self.scaler[2].mean_.shape[0]
+        dt = np.concatenate((self.scaler[2].inverse_transform(dt[:, 0, :w]), dt[:, 0, w:]),
+                            axis=1)
+        return (dt,data[1].cpu()) if isinstance(data, (tuple, list)) else dt

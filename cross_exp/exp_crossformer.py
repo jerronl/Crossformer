@@ -229,7 +229,7 @@ class Exp_crossformer(Exp_Basic):
 
         return self.model
 
-    def test(self, setting, save_pred=False, inverse=False):
+    def test(self, setting, save_pred=False, inverse=False, data_path=None):
         best_model_path = (
             os.path.join(self.args.checkpoints, setting) + "/" + "crossformer.pkl"
         )
@@ -239,7 +239,7 @@ class Exp_crossformer(Exp_Basic):
             print("suc to load", best_model_path)
         except:
             print("failed to load", best_model_path)
-        test_data, test_loader = self._get_data(flag="test", scaler=checkpoint[1])
+        test_data, test_loader = self._get_data(flag="test", scaler=checkpoint[1], data_path=data_path)
 
         self.model.eval()
 

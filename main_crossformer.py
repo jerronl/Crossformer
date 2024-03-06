@@ -135,19 +135,19 @@ data_parser = {
     "vols": {
 #         "patience":30,
 #         "train_epochs":1000,
-        'data_split':[0.7,0.1,0.2],
+        # 'data_split':[0.7,0.1,0.2],
         'batch_size':32,
         'cutday':'#2024-02-01',
     },
     }
-data_parser = {
-    "vols": {
-        "patience":30,
-        "train_epochs":500,
-        'data_split':[0.7,0.1,0.2],
-        'batch_size':32,
-    },
-    }
+# data_parser = {
+#     "vols": {
+#         "patience":30,
+#         "train_epochs":500,
+#         'data_split':[0.7,0.1,0.2],
+#         'batch_size':32,
+#     },
+#     }
 
 for ii in range(args.itr):
     # setting record of experiments
@@ -158,4 +158,5 @@ for ii in range(args.itr):
     exp.train(setting)
 
     print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-    exp.test(setting, args.save_pred)
+    preds,trues=exp.test(setting, True, data_path=[tables[-1]])
+    print(preds.shape,trues.shape)

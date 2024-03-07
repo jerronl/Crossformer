@@ -146,7 +146,7 @@ class Exp_crossformer(Exp_Basic):
                 model_optim.load_state_dict(checkpoint[0][1])
                 score = abs(checkpoint[1])
                 spoch = checkpoint[0][2]
-                print(f"\033[94msuc to load. score {score} epoch {spoch} from:", best_model_path,'\033[0m')
+                print(f"\033[92msuc to load. score {score} epoch {spoch} from:", best_model_path,'\033[0m')
             except:
                 print("\033[91mfailed to load", best_model_path,'\033[0m')
         early_stopping = EarlyStopping(
@@ -195,7 +195,7 @@ class Exp_crossformer(Exp_Basic):
             test_loss = self.vali(test_data, test_loader, criterion)
 
             print(
-                "\033[93mEpoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}\033[0m".format(
+                "Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
                     epoch + 1, train_steps, train_loss, vali_loss, test_loss
                 )
             )

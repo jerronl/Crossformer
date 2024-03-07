@@ -1,15 +1,22 @@
-tables = ['volvN.csv', 'volvT.csv', 'volvA.csv', 'volvG.csv', ]
-tables = ['volvG.csv', ]
+tables = [
+    "volvN.csv",
+    "volvT.csv",
+    "volvA.csv",
+    "volvG.csv",
+]
+tables = [
+    "volvG.csv",
+]
 mydrive = "E:/mydoc/git/trade/analyics/"
 
 data_parser = {
-#     "vols": {
-#         "patience":30,
-#         "train_epochs":100,
-#         'data_split':[0.7,0.1,0.2],
-#         'batch_size':512,
-#     },
-    }
+    #     "vols": {
+    #         "patience":30,
+    #         "train_epochs":100,
+    #         'data_split':[0.7,0.1,0.2],
+    #         'batch_size':512,
+    #     },
+}
 
 import argparse
 import torch
@@ -25,9 +32,17 @@ parser.add_argument(
     "--root_path", type=str, default=mydrive, help="root path of the data file"
 )
 parser.add_argument("--data_path", type=list, default=tables, help="data file")
-parser.add_argument("--data_split",type=str,default="0.7,0.1,0.2",help="train/val/test split, can be ratio or number",
+parser.add_argument(
+    "--data_split",
+    type=str,
+    default="0.7,0.1,0.2",
+    help="train/val/test split, can be ratio or number",
 )
-parser.add_argument("--checkpoints",type=str,default="./checkpoints/",help="location to store model checkpoints",
+parser.add_argument(
+    "--checkpoints",
+    type=str,
+    default="./checkpoints/",
+    help="location to store model checkpoints",
 )
 
 parser.add_argument("--in_len", type=int, default=20, help="input MTS length (T)")
@@ -36,15 +51,13 @@ parser.add_argument("--seg_len", type=int, default=5, help="segment length (L_se
 parser.add_argument(
     "--win_size", type=int, default=2, help="window size for segment merge"
 )
-parser.add_argument("--factor",type=int,default=10,help="num of routers in Cross-Dimension Stage of TSA (c)",
+parser.add_argument(
+    "--factor",
+    type=int,
+    default=10,
+    help="num of routers in Cross-Dimension Stage of TSA (c)",
 )
 
-parser.add_argument(
-    "--data_dim", type=int, default=32, help="Number of dimensions of the MTS data (D)"
-)
-parser.add_argument(
-    "--out_dim", type=int, default=3*4+4+22, help="Number of dimensions of the output"
-)
 parser.add_argument(
     "--d_model", type=int, default=256, help="dimension of hidden states (d_model)"
 )
@@ -106,7 +119,7 @@ if args.use_gpu and args.use_multi_gpu:
     args.gpu = args.device_ids[0]
     print(args.gpu)
 
-def update_args():
+def update_args(itr):
     if args.data in data_parser.keys():
         data_info = data_parser[args.data]
         for k,v in data_info.items():
@@ -116,8 +129,7 @@ def update_args():
 
     print("Args in experiment:")
     print(args)
-    setting = "Crossformer_{}_il{}_ol{}_sl{}_win{}_fa{}_dm{}_nh{}_el{}_itr{}".format(
-        args.data,
+    setting = "Crossformer_il{}_ol{}_sl{}_win{}_fa{}_dm{}_nh{}_el{}_itr{}".format(
         args.in_len,
         args.out_len,
         args.seg_len,
@@ -126,37 +138,40 @@ def update_args():
         args.d_model,
         args.n_heads,
         args.e_layers,
-        0,
+        itr,
     )
     return setting
 
-Exp = Exp_crossformer
 data_parser = {
     "vols": {
-#         "patience":30,
-#         "train_epochs":1000,
+        #         "patience":30,
+        #         "train_epochs":1000,
         # 'data_split':[0.7,0.1,0.2],
-        'batch_size':32,
-        'cutday':'#2024-02-01',
+        "batch_size": 32,
+        "cutday": "#2024-02-01",
     },
-    }
+}
 data_parser = {
     "vols": {
-        "patience":30,
-        "train_epochs":500,
-        'data_split':[0.7,0.1,0.2],
-        'batch_size':32,
+        "patience": 30,
+        "train_epochs": 500,
+        "data_split": [0.7, 0.1, 0.2],
+        "batch_size": 32,
     },
-    }
+}
 
 for ii in range(args.itr):
     # setting record of experiments
-    setting = update_args()
+    setting = update_args(ii)
 
-    exp = Exp(args)  # set experiments
+    exp = Exp_crossformer(args)  # set experiments
     print(f">>>>>>>start training : {setting}>>>>>>>>>>>>>>>>>>>>>>>>>>")
-    exp.train(setting)
+    exp.train(setting, "vols")
 
     print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-    preds,trues=exp.test(setting, True, data_path=[tables[-1]], inverse=True)
-    print(preds.shape,trues.shape)
+    preds, trues = exp.test(setting, 'vols', True, data_path=[tables[-1]], inverse=True)
+    print(preds.shape, trues.shape)
+
+    exp.train(setting, "prcs")
+    preds, trues = exp.test(setting, 'prcs', True, data_path=[tables[-1]], inverse=True)
+    print(preds.shape, trues.shape)

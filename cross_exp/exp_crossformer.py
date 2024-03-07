@@ -3,7 +3,7 @@ from cross_exp.exp_basic import Exp_Basic
 from cross_models.cross_former import Crossformer
 
 from utils.tools import EarlyStopping, adjust_learning_rate
-from utils.metrics import metric
+from utils.metrics import make_metric
 
 import numpy as np
 
@@ -12,7 +12,6 @@ import torch.nn as nn
 from torch import optim
 from torch.utils.data import DataLoader
 from torch.nn import DataParallel
-import torch.nn.functional as F
 
 import os
 import time
@@ -23,31 +22,16 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-y_cat = 22
-
-
-def cross_entropy_mse_loss_with_nans(input, target):
-    assert input.shape[1] == 1
-    tv, tc = target
-    iv, ic = input[:, :, :-y_cat], input[:, 0, -y_cat:]
-    mi = torch.isnan(iv)
-    mask = torch.isnan(tv) | mi
-    mc = torch.isnan(ic).any(dim=1)
-    return (
-        (F.mse_loss(iv[~mask], tv[~mask]) ** 0.5) * 10
-        + F.cross_entropy(ic[~mc], tc[~mc])
-        + (mi.sum() + mc.sum()) / target[0].numel()
-    )
-
 
 class Exp_crossformer(Exp_Basic):
     def __init__(self, args):
         super(Exp_crossformer, self).__init__(args)
+        self.ycat = self.model = None
 
-    def _build_model(self):
+    def build_model(self, data):
         model = Crossformer(
-            self.args.data_dim,
-            self.args.out_dim,
+            data.data_dim,
+            data.out_dim,
             self.args.in_len,
             self.args.out_len,
             self.args.seg_len,
@@ -61,12 +45,12 @@ class Exp_crossformer(Exp_Basic):
             self.args.baseline,
             self.device,
         ).float()
-
+        self.ycat = data.ycat
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
-        return model
+        self.model = model.to(self.device)
 
-    def _get_data(self, flag, data_path=None, scaler=None):
+    def _get_data(self, flag, data=None, data_path=None, scaler=None):
         args = self.args
 
         if flag == "test":
@@ -80,7 +64,7 @@ class Exp_crossformer(Exp_Basic):
         data_set = DatasetMTS(
             root_path=args.root_path,
             data_path=data_path or args.data_path,
-            data_name=args.data,
+            data_name=data or args.data,
             flag=flag,
             in_len=args.in_len,
             data_split=args.data_split,
@@ -103,9 +87,35 @@ class Exp_crossformer(Exp_Basic):
         model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
         return model_optim
 
-    def _select_criterion(self):
-        # criterion =  nn.MSELoss()
-        return cross_entropy_mse_loss_with_nans
+    def _select_criterion(self, ycat):
+        mse, cel = nn.MSELoss(), nn.CrossEntropyLoss()
+
+        def cross_entropy_mse_loss_with_nans(input, target):
+            assert input.shape[1] == 1
+            tv, tc = target
+            iv, ic = input[:, :, :-ycat], input[:, 0, -ycat:]
+            mi = torch.isnan(iv)
+            mask = torch.isnan(tv) | mi
+            mc = torch.isnan(ic).any(dim=1)
+            return (
+                (mse(iv[~mask], tv[~mask]) ** 0.5) * 10
+                + cel(ic[~mc], tc[~mc])
+                + (mi.sum() + mc.sum()) / target[0].numel()
+            )
+
+        def cross_mse_loss_with_nans(input, target):
+            assert input.shape[1] == 1
+            tv, _ = target
+            iv = input
+            mi = torch.isnan(iv)
+            mask = torch.isnan(tv) | mi
+            return (mse(iv[~mask], tv[~mask]) ** 0.5) * 10 + mi.sum() / target[
+                0
+            ].numel()
+
+        return (
+            cross_entropy_mse_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans
+        )
 
     def vali(self, vali_data, vali_loader, criterion):
         self.model.eval()
@@ -119,23 +129,20 @@ class Exp_crossformer(Exp_Basic):
         self.model.train()
         return total_loss
 
-    def train(self, setting):
-        train_data, train_loader = self._get_data(flag="train")
-        vali_data, vali_loader = self._get_data(flag="val")
-        test_data, test_loader = self._get_data(flag="test")
+    def train(self, setting, data):
+        train_data, train_loader = self._get_data(flag="train", data=data)
+        vali_data, vali_loader = self._get_data(flag="val", data=data)
+        test_data, test_loader = self._get_data(flag="test", data=data)
+        self.build_model(train_data)
 
-        path = os.path.join(self.args.checkpoints, setting)
+        path = os.path.join(self.args.checkpoints, setting + data)
         if not os.path.exists(path):
             os.makedirs(path)
-        with open(os.path.join(path, "args.json"), "w") as f:
-            json.dump(vars(self.args), f, indent=True)
-        with open(os.path.join(path, "scale_statistic.pkl"), "wb") as f:
-            pickle.dump(train_data.scaler, f)
 
         train_steps = len(train_loader)
 
         model_optim = self._select_optimizer()
-        criterion = self._select_criterion()
+        criterion = self._select_criterion(self.ycat)
         score = None
         spoch = 0
         if self.args.resume:
@@ -146,9 +153,18 @@ class Exp_crossformer(Exp_Basic):
                 model_optim.load_state_dict(checkpoint[0][1])
                 score = abs(checkpoint[1])
                 spoch = checkpoint[0][2]
-                print(f"\033[92msuc to load. score {score} epoch {spoch} from:", best_model_path,'\033[0m')
-            except:
-                print("\033[91mfailed to load", best_model_path,'\033[0m')
+                print(
+                    f"\033[92msuc to load. score {score} epoch {spoch} from:",
+                    best_model_path,
+                    "\033[0m",
+                )
+            except (
+                FileNotFoundError,
+                RuntimeError,
+                IndexError,
+                pickle.UnpicklingError,
+            ) as e:
+                print("\033[91mfailed to load", e, best_model_path, "\033[0m")
         early_stopping = EarlyStopping(
             patience=self.args.patience, verbose=True, best_score=score
         )
@@ -201,17 +217,22 @@ class Exp_crossformer(Exp_Basic):
             )
             early_stopping(
                 vali_loss,
-                (self.model.state_dict(),model_optim.state_dict(),epoch,train_data.scaler,),
+                (
+                    self.model.state_dict(),
+                    model_optim.state_dict(),
+                    epoch,
+                    train_data.scaler,
+                ),
                 path,
             )
             if early_stopping.early_stop:
                 print("\033[95mEarly stopping\033[0m")
                 break
 
-            if early_stopping.counter>1:
+            if early_stopping.counter > 1:
                 adjust_learning_rate(model_optim, epoch + 1 - spoch, self.args)
             else:
-                spoch+=1
+                spoch += 1
 
         best_model_path = path + "/" + "checkpoint.pth"
         checkpoint = list(torch.load(best_model_path))
@@ -227,17 +248,24 @@ class Exp_crossformer(Exp_Basic):
 
         return self.model
 
-    def test(self, setting, save_pred=False, inverse=False, data_path=None):
+    def test(self, setting, data, save_pred=False, inverse=False, data_path=None):
         best_model_path = (
-            os.path.join(self.args.checkpoints, setting) + "/" + "crossformer.pkl"
+            os.path.join(self.args.checkpoints, setting + data) + "/crossformer.pkl"
         )
         try:
             checkpoint = torch.load(best_model_path)
             self.model = checkpoint[0]
-            print("\033[92msuc to load", best_model_path,'\033[0m')
-        except:
-            print("\033[91mfailed to load", best_model_path,'\033[0m')
-        test_data, test_loader = self._get_data(flag="test", scaler=checkpoint[1], data_path=data_path)
+            print("\033[92msuc to load", best_model_path, "\033[0m")
+        except (
+            FileNotFoundError,
+            RuntimeError,
+            IndexError,
+            pickle.UnpicklingError,
+        ) as e:
+            print("\033[91mfailed to load", e, best_model_path, "\033[0m")
+        test_data, test_loader = self._get_data(
+            data=data, flag="test", scaler=checkpoint[1], data_path=data_path
+        )
 
         self.model.eval()
 
@@ -245,6 +273,7 @@ class Exp_crossformer(Exp_Basic):
         trues = []
         metrics_all = []
         instance_num = 0
+        metric = make_metric(test_data.ycat)
 
         with torch.no_grad():
             for i, (batch_x, batch_y) in enumerate(test_loader):
@@ -276,7 +305,7 @@ class Exp_crossformer(Exp_Basic):
             os.makedirs(folder_path)
 
         mae, mse, rmse, mape, mspe, accr = metrics_mean
-        print("mse:{}, mae:{}".format(mse, mae), metrics_mean)
+        print("\033[93mmse:{}, mae:{}".format(mse, mae), metrics_mean, "\033[0m")
 
         np.save(
             folder_path + "metrics.npy", np.array([mae, mse, rmse, mape, mspe, accr])
@@ -287,7 +316,7 @@ class Exp_crossformer(Exp_Basic):
             np.save(folder_path + "pred.npy", preds)
             np.save(folder_path + "true.npy", trues)
 
-        return preds,trues
+        return preds, trues
 
     def _process_one_batch(self, dataset_object, batch_x, batch_y, inverse=False):
         batch_x = [x.float().to(self.device) for x in batch_x]
@@ -330,6 +359,7 @@ class Exp_crossformer(Exp_Basic):
         trues = []
         metrics_all = []
         instance_num = 0
+        metric = make_metric(data_set.ycat)
 
         with torch.no_grad():
             for i, (batch_x, batch_y) in enumerate(data_loader):

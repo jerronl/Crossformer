@@ -220,8 +220,8 @@ class DatasetMTS(Dataset):
                 scaler_y,
             ),
             (
-                xnp[0].shape[2]+cyclics[0].shape[2]+xpc[0].shape[2],
-                xvs[0].shape[1]+xvsp[0].shape[1],
+                xnp[self.set_type].shape[2]+cyclics[self.set_type].shape[2]+xpc[self.set_type].shape[2],
+                xvs[self.set_type].shape[1]+xvsp[self.set_type].shape[1],
                 cols["ycat"] + len(vy),
                 cols["ycat"],
             ),

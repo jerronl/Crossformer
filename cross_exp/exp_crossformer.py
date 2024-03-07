@@ -32,6 +32,7 @@ class Exp_crossformer(Exp_Basic):
         model = Crossformer(
             data.data_dim,
             data.out_dim,
+            data.ycat,
             self.args.in_len,
             self.args.out_len,
             self.args.seg_len,

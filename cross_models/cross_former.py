@@ -11,7 +11,7 @@ from cross_models.cross_embed import DSW_embedding
 from math import ceil
 
 class Crossformer(nn.Module):
-    def __init__(self, data_dim, out_dim, in_len, out_len, seg_len, win_size = 4, 
+    def __init__(self, data_dim, out_dim, ycat, in_len, out_len, seg_len, win_size = 4, 
                 factor=10, d_model=512, d_ff = 1024, n_heads=8, e_layers=3, 
                 dropout=0.0, baseline = False, device=torch.device('cuda:0')):
         super(Crossformer, self).__init__()
@@ -31,7 +31,7 @@ class Crossformer(nn.Module):
         self.in_len_add = self.pad_in_len - self.in_len
 
         # Embedding
-        self.enc_value_embedding = DSW_embedding(seg_len, d_model)
+        self.enc_value_embedding = DSW_embedding(seg_len, d_model, ycat)
         self.enc_pos_embedding = nn.Parameter(torch.randn(1, data_dim, (self.pad_in_len // seg_len), d_model))
         self.pre_norm = nn.LayerNorm(d_model)
 

@@ -205,10 +205,11 @@ class Exp_crossformer(Exp_Basic):
                 path,
             )
             if early_stopping.early_stop:
-                print("Early stopping")
+                print("\033[95mEarly stopping\033[0m")
                 break
 
-            adjust_learning_rate(model_optim, epoch + 1 - spoch, self.args)
+            if early_stopping.counter>2:
+                adjust_learning_rate(model_optim, epoch + 1 - spoch, self.args)
 
         best_model_path = path + "/" + "checkpoint.pth"
         checkpoint = list(torch.load(best_model_path))

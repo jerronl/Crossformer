@@ -146,9 +146,9 @@ class Exp_crossformer(Exp_Basic):
                 model_optim.load_state_dict(checkpoint[0][1])
                 score = abs(checkpoint[1])
                 spoch = checkpoint[0][2]
-                print(f"suc to load. score {score} epoch {spoch} from:", best_model_path)
+                print(f"\033[94msuc to load. score {score} epoch {spoch} from:", best_model_path,'\033[0m')
             except:
-                print("failed to load", best_model_path)
+                print("\033[91mfailed to load", best_model_path,'\033[0m')
         early_stopping = EarlyStopping(
             patience=self.args.patience, verbose=True, best_score=score
         )
@@ -195,7 +195,7 @@ class Exp_crossformer(Exp_Basic):
             test_loss = self.vali(test_data, test_loader, criterion)
 
             print(
-                "Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
+                "\033[93mEpoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}\033[0m".format(
                     epoch + 1, train_steps, train_loss, vali_loss, test_loss
                 )
             )
@@ -231,9 +231,9 @@ class Exp_crossformer(Exp_Basic):
         try:
             checkpoint = torch.load(best_model_path)
             self.model = checkpoint[0]
-            print("suc to load", best_model_path)
+            print("\033[92msuc to load", best_model_path,'\033[0m')
         except:
-            print("failed to load", best_model_path)
+            print("\033[91mfailed to load", best_model_path,'\033[0m')
         test_data, test_loader = self._get_data(flag="test", scaler=checkpoint[1], data_path=data_path)
 
         self.model.eval()

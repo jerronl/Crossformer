@@ -17,7 +17,7 @@ def adjust_learning_rate(optimizer, epoch, args):
         lr = lr_adjust[epoch]
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
-        print('Updating learning rate to {}'.format(lr))
+        print('\033[95mUpdating learning rate to {}\033[0m'.format(lr))
 
 class EarlyStopping:
     def __init__(self, patience=7, verbose=False, delta=0, best_score=None):
@@ -36,7 +36,7 @@ class EarlyStopping:
             self.save_checkpoint(val_loss, model, path)
         elif score > self.best_score + self.delta:
             self.counter += 1
-            print(f"EarlyStopping counter: {self.counter} out of {self.patience} score {score} best {self.best_score}")
+            print(f"\033[96mEarlyStopping counter: {self.counter} out of {self.patience} score {score} best {self.best_score}\033[0m")
             if self.counter >= self.patience:
                 self.early_stop = True
         else:
@@ -47,7 +47,7 @@ class EarlyStopping:
     def save_checkpoint(self, val_loss, model, path):
         if self.verbose:
             print(
-                f"Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ..."
+                f"\033[94mValidation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...\033[0m"
             )
         torch.save((model,-val_loss), path + "/" + "checkpoint.pth",
         )

@@ -32,15 +32,11 @@ class DSW_embedding(nn.Module):
 
         self.linear1 = nn.Linear(seg_len, d_model)
         self.linear2 = nn.Linear(seg_len + 1, d_model)
-        self.linear3 = nn.Linear(seg_len + self.use_prc, d_model)
+        self.linear3 = nn.Linear(seg_len + 1, d_model) if self.use_prc else self.linear1
 
     def forward(self, x):
         xnp, cyclic, xpc, xvs, xvsp = x
-        x_embed1 = dsw(
-            self.seg_len,
-            self.linear1,
-            xnp,
-        )
+        x_embed1 = dsw(self.seg_len,self.linear1,xnp,)
         x_embed2 = dsw(self.seg_len, self.linear2, cyclic, xvs)
         x_embed3 = dsw(self.seg_len, self.linear3, xpc, xvsp if self.use_prc else None)
         return torch.cat((x_embed1, x_embed2, x_embed3), 1)

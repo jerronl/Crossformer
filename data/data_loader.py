@@ -114,15 +114,17 @@ class DatasetMTS(Dataset):
             df = df[~df["dtm0"].isna()]
             df["date"] = np.vectorize(excel_date)(df["date"])
             if self.cutday is None:
+                ds = self.data_split * self.data_split[1]
                 for i, df_raw in enumerate(df_raws):
                     df_raws[i] = pd.concat(
                         [
                             df_raw,
-                            df.iloc[
-                                int(self.data_split[i] * len(df)) : int(
-                                    self.data_split[i + 1] * len(df)
-                                )
-                            ],
+                            df.iloc[int(ds[i] * len(df)) : int(ds[i + 1] * len(df))],
+                            (
+                                df.iloc[int(ds[-1] * len(df)) :]
+                                if self.set_type == 0
+                                else pd.DataFrame()
+                            ),
                         ]
                     )
             else:
@@ -201,7 +203,11 @@ class DatasetMTS(Dataset):
                         axis=1,
                     )
                 )
-                xvsp.append(scaler_p.transform(df_raw["spot"].values.reshape(-1, 1)) if cols['xvsp'] else np.zeros((len(x),1),float))
+                xvsp.append(
+                    scaler_p.transform(df_raw["spot"].values.reshape(-1, 1))
+                    if cols["xvsp"]
+                    else np.zeros((len(x), 1), float)
+                )
                 y[i] = (
                     scaler_y.transform(y[i]).reshape(-1, 1, y[i].shape[1]),
                     y[i][:, 0] - 1,
@@ -220,8 +226,10 @@ class DatasetMTS(Dataset):
                 scaler_y,
             ),
             (
-                xnp[self.set_type].shape[2]+cyclics[self.set_type].shape[2]+xpc[self.set_type].shape[2],
-                xvs[self.set_type].shape[1]+xvsp[self.set_type].shape[1],
+                xnp[self.set_type].shape[2]
+                + cyclics[self.set_type].shape[2]
+                + xpc[self.set_type].shape[2],
+                xvs[self.set_type].shape[1] + xvsp[self.set_type].shape[1],
                 cols["ycat"] + len(vy),
                 cols["ycat"],
             ),

@@ -155,7 +155,7 @@ data_parser = {
     "vols": {
         "patience": 30,
         "train_epochs": 500,
-        "data_split": [0.7, 0.1, 0.2],
+        "data_split": [0.7, 0.15, 0.15],
         "batch_size": 32,
     },
 }

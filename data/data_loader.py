@@ -106,29 +106,24 @@ class DatasetMTS(Dataset):
                 df["horizon"] = df[f"e2d_{self.in_len}"] - df["e2d"]
                 lasttime = df.groupby(["day"])["date"].max().values
                 df = df[
-                    (df["date"] > self.cutday)
+                    (df["date"] > self.cutday[0])
+                    & (df["date"] < self.cutday[1])
                     & (df["date"].isin(lasttime))
                     & (df["horizon"] > 0)
                 ].sort_values(by=["horizon", "day", f"e2d_{self.in_len}"])
             df = df.replace(-99999, float("nan"))
             df = df[~df["dtm0"].isna()]
+            ds =( self.data_split * (1 + self.data_split[1]) / 2 * len(df)).astype(int) if self.cutday is None else [0, 0, 0, len(df)-1]
+            print(table, df["date"].iloc[ds])
             df["date"] = np.vectorize(excel_date)(df["date"])
-            if self.cutday is None:
-                ds = self.data_split * self.data_split[1]
-                for i, df_raw in enumerate(df_raws):
-                    df_raws[i] = pd.concat(
-                        [
-                            df_raw,
-                            df.iloc[int(ds[i] * len(df)) : int(ds[i + 1] * len(df))],
-                            (
-                                df.iloc[int(ds[-1] * len(df)) :]
-                                if self.set_type == 0
-                                else pd.DataFrame()
-                            ),
-                        ]
-                    )
-            else:
-                df_raws[self.set_type] = pd.concat([df_raws[2], df])
+            for i, df_raw in enumerate(df_raws):
+                df_raws[i] = pd.concat(
+                    [
+                        df_raw,
+                        df.iloc[ds[i] : ds[i + 1]],
+                        df.iloc[ds[-1] :] if i == 0 else pd.DataFrame(),
+                    ]
+                )
         # df_raws = [df_raw.sort_values(by="date") for df_raw in df_raws]
         cols = data_columns(self.data_name)
         vnp = [c for s in cols["vnp"] for c in cols[s]]  # vnp.sort()

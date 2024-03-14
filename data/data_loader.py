@@ -2,14 +2,15 @@
 
 import warnings
 import os
+import calendar
+from random import uniform
+from datetime import datetime, timedelta
 import pandas as pd, numpy as np
 from sklearn.preprocessing import StandardScaler
 
 # from einops import rearrange
 from torch.utils.data import Dataset
-from datetime import datetime, timedelta
-from data.data_def import data_columns
-import calendar
+from data.data_def import data_columns, data_names
 
 warnings.filterwarnings("ignore")
 
@@ -19,13 +20,8 @@ epoch0 = datetime(1899, 12, 31)
 
 def excel_date(x):
     delta = (
-        datetime(
-            int(x[1:5]),
-            int(x[6:8]),
-            int(x[9:11]),
-            int(x[12:14]),
-            int(x[15:17]),
-            int(x[18:20]),
+        datetime(int(x[1:5]),int(x[6:8]),int(x[9:11]),
+                 int(x[12:14]),int(x[15:17]),int(x[18:20]),
         )
         - epoch0
     )
@@ -34,17 +30,20 @@ def excel_date(x):
 
 def cyclic_encode(original, period):
     return [
-        np.sin(2 * np.pi * original / period),
-        np.cos(2 * np.pi * original / period),
+        np.sin(2 * np.pi * original.astype(float) / period),
+        np.cos(2 * np.pi * original.astype(float) / period),
     ]
 
 
 def cyclic_t(x):
     if len(x) < 1:
         return [pd.DataFrame()]
-    assert np.issubdtype(x.dtype, float)
-
-    t = np.vectorize(lambda x: (epoch0 + timedelta(days=x)).timetuple())(x)
+    if np.issubdtype(x.dtype, float):
+        t = np.vectorize(lambda x: (epoch0 + timedelta(days=x)).timetuple())(x)
+    elif np.issubdtype(x.dtype, datetime):
+        t = np.vectorize(lambda x: x.timetuple())(x)
+    else:
+        raise TypeError(f'unsuported type {x.dtype}')
     tm_yday = cyclic_encode(
         t[7] - 1, np.vectorize(lambda x: 365 - 28 + calendar.monthrange(x, 2)[1])(t[0])
     )
@@ -99,39 +98,40 @@ class DatasetMTS(Dataset):
             self.data = self.__class__.datas[self.data_name + str(self.data_path)]
             return
         df_raws = [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
-        for table in self.data_path:
-            df = pd.read_csv(os.path.join(self.root_path, table))
-            if self.cutday is not None:
-                df["day"] = pd.to_datetime(df["date"].str.replace("#", "")).dt.date
-                df["horizon"] = df[f"e2d_{self.in_len}"] - df["e2d"]
-                lasttime = df.groupby(["day"])["date"].max().values
-                df = df[
-                    (df["date"] > self.cutday[0])
-                    & (df["date"] < self.cutday[1])
-                    & (df["date"].isin(lasttime))
-                    & (df["horizon"] > 0)
-                ].sort_values(by=["horizon", "day", f"e2d_{self.in_len}"])
-            df = df.replace(-99999, float("nan"))
-            df = df[~df["dtm0"].isna()]
-            ds =( self.data_split * (1 + self.data_split[1]) / 2 * len(df)).astype(int) if self.cutday is None else [0, 0, 0, len(df)-1]
-            print(table, df["date"].iloc[ds])
-            df["date"] = np.vectorize(excel_date)(df["date"])
-            for i, df_raw in enumerate(df_raws):
-                df_raws[i] = pd.concat(
-                    [
-                        df_raw,
-                        df.iloc[ds[i] : ds[i + 1]],
-                        df.iloc[ds[-1] :] if i == 0 else pd.DataFrame(),
-                    ]
+        if isinstance(self.data_path,pd.DataFrame):
+            df_raws[self.set_type]=self.data_path
+        else:
+            for table in self.data_path:
+                df = pd.read_csv(os.path.join(self.root_path, table))
+                if self.cutday is not None:
+                    df["day"] = pd.to_datetime(df["date"].str.replace("#", "")).dt.date
+                    df["horizon"] = df[f"e2d_{self.in_len}"] - df["e2d"]
+                    lasttime = df.groupby(["day"])["date"].max().values
+                    df = df[
+                        (df["date"] > self.cutday[0])
+                        & (df["date"] < self.cutday[1])
+                        & (df["date"].isin(lasttime))
+                        & (df["horizon"] > 0)
+                    ].sort_values(by=["horizon", "day", f"e2d_{self.in_len}"])
+                df = df.replace(-99999, float("nan"))
+                df = df[~df["dtm0"].isna()]
+                ds = (
+                    (self.data_split * uniform(.8,.9) * len(df)).astype(int)
+                    if self.cutday is None
+                    else [0, 0, 0, len(df) - 1]
                 )
-        # df_raws = [df_raw.sort_values(by="date") for df_raw in df_raws]
+                print(table, df["date"].iloc[ds])
+                df["date"] = np.vectorize(excel_date)(df["date"])
+                for i, df_raw in enumerate(df_raws):
+                    df_raws[i] = pd.concat(
+                        [
+                            df_raw,
+                            df.iloc[ds[i] : ds[i + 1]],
+                            df.iloc[ds[-1] :] if i == 0 else pd.DataFrame(),
+                        ]
+                    )
         cols = data_columns(self.data_name)
-        vnp = [c for s in cols["vnp"] for c in cols[s]]  # vnp.sort()
-        vnpt = [f"{var}_{i}" for i in range(1, self.in_len + 1) for var in vnp]
-        vpc = cols["vpc"]
-        vvs = cols["vs"]
-        vy = [c for s in cols["y"] for c in cols[s]]
-        vpct = [f"{var}_{i}" for i in range(1, self.in_len + 1) for var in vpc]
+        vnp, vnpt, vpc, vvs, vy, vpct=data_names(cols, self.in_len)
         xnp, xpc, xvsp, xvs, y, cyclics = [], [], [], [], [], []
         for i, df_raw in enumerate(df_raws):
             if len(df_raw.columns) < 1:

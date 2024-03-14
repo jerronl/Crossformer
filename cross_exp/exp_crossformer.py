@@ -1,10 +1,9 @@
-from data.data_loader import DatasetMTS
-from cross_exp.exp_basic import Exp_Basic
-from cross_models.cross_former import Crossformer
+import os
+import time
+import pickle
 
-from utils.tools import EarlyStopping, adjust_learning_rate
-from utils.metrics import make_metric
-
+import warnings
+from argparse import Namespace
 import numpy as np
 
 import torch
@@ -13,18 +12,76 @@ from torch import optim
 from torch.utils.data import DataLoader
 from torch.nn import DataParallel
 
-import os
-import time
-import json
-import pickle
+from data.data_loader import DatasetMTS
+from cross_exp.exp_basic import Exp_Basic
+from cross_models.cross_former import Crossformer
+from utils.tools import EarlyStopping, adjust_learning_rate
+from utils.metrics import make_metric
 
-import warnings
 
 warnings.filterwarnings("ignore")
 
+# class MSLELoss(nn.Module):
+#     def __init__(self):
+#         super(MSLELoss, self).__init__()
+    
+#     def forward(self, predicted, actual):
+#         # Adding a small number to ensure the log function receives values > 0
+#         return torch.mean((torch.log(predicted + 1) - torch.log(actual + 1)) ** 2)
+
+# class MSLELoss(nn.Module):
+#     def __init__(self):
+#         super(MSLELoss, self).__init__()
+    
+#     def forward(self, predicted, actual):
+#         mse, cel = nn.MSELoss(), nn.CrossEntropyLoss()
+
+#         def cross_entropy_mse_loss_with_nans(input, target):
+#             assert input.shape[1] == 1
+#             tv, tc = target
+#             iv, ic = input[:, :, :-ycat], input[:, 0, -ycat:]
+#             mi = torch.isnan(iv)
+#             mask = torch.isnan(tv) | mi
+#             mc = torch.isnan(ic).any(dim=1)
+#             return (
+#                 (mse(iv[~mask], tv[~mask]) ** 0.5) * 10
+#                 + cel(ic[~mc], tc[~mc])
+#                 + (mi.sum() + mc.sum()) / target[0].numel()
+#             )
+
+#         def cross_mse_loss_with_nans(input, target):
+#             assert input.shape[1] == 1
+#             tv, _ = target
+#             iv = input
+#             mi = torch.isnan(iv)
+#             mask = torch.isnan(tv) | mi
+#             return (mse(iv[~mask], tv[~mask]) ** 0.5) * 10 + mi.sum() / target[
+#                 0
+#             ].numel()
+
+#         return torch.mean((torch.log(predicted + 1) - torch.log(actual + 1)) ** 2)
 
 class Exp_crossformer(Exp_Basic):
-    def __init__(self, args):
+    def __init__(self, args=None):
+        if args is None:
+            args=Namespace()
+            args.in_len=20
+            args.out_len=1
+            args.seg_len=5
+            args.win_size=2
+            args.factor=10
+            args.d_model=512
+            args.d_ff=512
+            args.n_heads=4
+            args.e_layers=5
+            args.dropout=0.2
+            args.baseline=False
+            args.use_gpu=True
+            args.gpu=0
+            args.batch_size=1024
+            args.cutday=args.data_split=args.root_path=None
+            args.checkpoints="./checkpoints/"
+            args.num_workers=0
         super(Exp_crossformer, self).__init__(args)
         self.ycat = self.model = None
 
@@ -64,7 +121,7 @@ class Exp_crossformer(Exp_Basic):
             batch_size = args.batch_size
         data_set = DatasetMTS(
             root_path=args.root_path,
-            data_path=data_path or args.data_path,
+            data_path=data_path if data_path is not None else args.data_path,
             data_name=data or args.data,
             flag=flag,
             in_len=args.in_len,
@@ -249,21 +306,24 @@ class Exp_crossformer(Exp_Basic):
 
         return self.model
 
-    def test(self, setting, data, save_pred=False, inverse=False, data_path=None):
-        best_model_path = (
-            os.path.join(self.args.checkpoints, setting + data) + "/crossformer.pkl"
-        )
-        try:
-            checkpoint = torch.load(best_model_path)
-            self.model = checkpoint[0]
-            print("\033[92msuc to load", best_model_path, "\033[0m")
-        except (
-            FileNotFoundError,
-            RuntimeError,
-            IndexError,
-            pickle.UnpicklingError,
-        ) as e:
-            print("\033[91mfailed to load", e, best_model_path, "\033[0m")
+    def test(self, setting="model", data="vols", save_pred=False, inverse=False, data_path=None, run_metric=True):
+        if self.model is None:
+            best_model_path = (
+                os.path.join(self.args.checkpoints, setting + data) + "/crossformer.pkl"
+            )
+            try:
+                checkpoint = torch.load(best_model_path)
+                self.model = checkpoint[0]
+                print("\033[92msuc to load", best_model_path, "\033[0m")
+            except (
+                FileNotFoundError,
+                RuntimeError,
+                IndexError,
+                pickle.UnpicklingError,
+            ) as e:
+                print("\033[91mfailed to load", e, best_model_path, "\033[0m")
+        else:
+            checkpoint=(None,None)
         test_data, test_loader = self._get_data(
             data=data, flag="test", scaler=checkpoint[1], data_path=data_path
         )
@@ -283,8 +343,9 @@ class Exp_crossformer(Exp_Basic):
                 )
                 batch_size = pred.shape[0]
                 instance_num += batch_size
-                batch_metric = np.array(metric(pred, true)) * batch_size
-                metrics_all.append(batch_metric)
+                if run_metric:
+                    batch_metric = np.array(metric(pred, true)) * batch_size
+                    metrics_all.append(batch_metric)
                 if save_pred:
                     preds.append(
                         pred
@@ -297,25 +358,26 @@ class Exp_crossformer(Exp_Basic):
                         else true[0].detach().cpu().numpy()
                     )
 
-        metrics_all = np.stack(metrics_all, axis=0)
-        metrics_mean = metrics_all.sum(axis=0) / instance_num
+        if run_metric:
+            metrics_all = np.stack(metrics_all, axis=0)
+            metrics_mean = metrics_all.sum(axis=0) / instance_num
 
-        # result save
-        folder_path = "./results/" + setting + "/"
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
+            # result save
+            folder_path = "./results/" + setting + "/"
+            if not os.path.exists(folder_path):
+                os.makedirs(folder_path)
 
-        mae, mse, rmse, mape, mspe, accr = metrics_mean
-        print("\033[93mmse:{}, mae:{}".format(mse, mae), metrics_mean, "\033[0m")
+            mae, mse, rmse, mape, mspe, accr = metrics_mean
+            print("\033[93mmse:{}, mae:{}".format(mse, mae), metrics_mean, "\033[0m")
 
-        np.save(
-            folder_path + "metrics.npy", np.array([mae, mse, rmse, mape, mspe, accr])
-        )
-        if save_pred:
-            preds = np.concatenate(preds, axis=0)
-            trues = np.concatenate(trues, axis=0)
-            np.save(folder_path + "pred.npy", preds)
-            np.save(folder_path + "true.npy", trues)
+            np.save(
+                folder_path + "metrics.npy", np.array([mae, mse, rmse, mape, mspe, accr])
+            )
+            if save_pred:
+                preds = np.concatenate(preds, axis=0)
+                trues = np.concatenate(trues, axis=0)
+                np.save(folder_path + "pred.npy", preds)
+                np.save(folder_path + "true.npy", trues)
 
         return preds, trues
 

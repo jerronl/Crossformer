@@ -357,7 +357,7 @@ class Exp_crossformer(Exp_Basic):
             flag="test",
             scaler=self.checkpoint[1],
             data_path=data_path,
-            data_split=self.checkpoint[2],
+            data_split=self.checkpoint[2] if len(self.checkpoint) > 2 else None,
         )
 
         self.model.eval()

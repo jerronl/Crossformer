@@ -106,13 +106,13 @@ class DatasetMTS(Dataset):
         if isinstance(self.data_path, pd.DataFrame):
             df_raws[self.set_type] = self.data_path
         else:
-            if isinstance(self.data_split[0], float):
-                data_split = np.cumsum([0] + self.data_split)
-                self.data_split = []
-            else:
+            if isinstance(self.data_split, dict):
                 data_split = self.data_split
+            else:
+                data_split = np.cumsum([0] + self.data_split)
+                self.data_split = {}
 
-            for it, table in enumerate(self.data_path):
+            for table in self.data_path:
                 df = pd.read_csv(os.path.join(self.root_path, table)).replace(
                     -99999, float("nan")
                 )
@@ -136,13 +136,19 @@ class DatasetMTS(Dataset):
                             ]
                         )
                     )
-                if isinstance(data_split[0], float):
-                    ds = (data_split * uniform(0.8, 0.9) * len(df)).astype(int)
-                    self.data_split.append(ds)
+                if isinstance(data_split[0], dict) and table in data_split:
+                    ds = data_split[table]
+                else:
+                    if not hasattr(data_split, "__getitem__") or not isinstance(
+                        data_split[0], float
+                    ):
+                        data_split = [0, 0.7, 0.85, 1]
+                    ds = (np.array(data_split) * uniform(0.8, 0.9) * len(df)).astype(
+                        int
+                    )
+                    self.data_split[table] = ds
                     if self.cutday is not None:
                         ds = [0, 0, 0, len(df) - 1]
-                else:
-                    ds = data_split[it]
 
                 print(table, df["date"].iloc[ds])
                 df["date"] = np.vectorize(excel_date)(df["date"])

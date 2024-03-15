@@ -84,7 +84,7 @@ class Exp_crossformer(Exp_Basic):
             args.checkpoints = "./checkpoints/"
             args.num_workers = 0
         super(Exp_crossformer, self).__init__(args)
-        self.ycat = self.model = None
+        self.ycat = self.model = self.checkpoint = None
 
     def build_model(self, data):
         model = Crossformer(
@@ -319,10 +319,11 @@ class Exp_crossformer(Exp_Basic):
             if isinstance(self.model, DataParallel)
             else self.model.state_dict()
         )
-        torch.save(checkpoint, path + "/" + "checkpoint.pth")
+        torch.save(checkpoint, path + "/checkpoint.pth")
+        self.checkpoint = (self.model, checkpoint[0][3], checkpoint[0][4])
         torch.save(
-            (self.model, checkpoint[0][3], checkpoint[0][4]),
-            path + "/" + "crossformer.pkl",
+            self.checkpoint,
+            path + "/crossformer.pkl",
         )
 
         return self.model
@@ -336,13 +337,13 @@ class Exp_crossformer(Exp_Basic):
         data_path=None,
         run_metric=True,
     ):
-        if self.model is None:
+        if self.checkpoint is None:
             best_model_path = (
                 os.path.join(self.args.checkpoints, setting + data) + "/crossformer.pkl"
             )
             try:
-                checkpoint = torch.load(best_model_path)
-                self.model = checkpoint[0]
+                self.checkpoint = torch.load(best_model_path)
+                self.model = self.checkpoint[0]
                 print("\033[92msuc to load", best_model_path, "\033[0m")
             except (
                 FileNotFoundError,
@@ -351,14 +352,12 @@ class Exp_crossformer(Exp_Basic):
                 pickle.UnpicklingError,
             ) as e:
                 print("\033[91mfailed to load", e, best_model_path, "\033[0m")
-        else:
-            checkpoint = (None, None, None)
         test_data, test_loader = self._get_data(
             data=data,
             flag="test",
-            scaler=checkpoint[1],
+            scaler=self.checkpoint[1],
             data_path=data_path,
-            data_split=checkpoint[2],
+            data_split=self.checkpoint[2],
         )
 
         self.model.eval()
@@ -401,19 +400,21 @@ class Exp_crossformer(Exp_Basic):
                 os.makedirs(folder_path)
 
             mae, mse, rmse, mape, mspe, accr = metrics_mean
-            print(f"\033[93mmae:{mae:.3f}, mse:{mse:.3f}, rmse:{rmse:.3f}, mape:{mape:.3f}, mspe:{mspe:.3f}, accr:{accr} \033[0m")
+            print(
+                f"\033[93mmae:{mae:.3f}, mse:{mse:.3f}, rmse:{rmse:.3f}, mape:{mape:.3f}, mspe:{mspe:.3f}, accr:{accr} \033[0m"
+            )
 
-            # np.save(
-            #     folder_path + "metrics.npy",
-            #     np.array([mae, mse, rmse, mape, mspe, accr]),
-            # )
+            np.save(
+                folder_path + f"mmae{mae:.3f}, accr{accr}.npy",
+                np.array([mae, mse, rmse, mape, mspe, accr]),
+            )
             # if save_pred:
             #     preds = np.concatenate(preds, axis=0)
             #     trues = np.concatenate(trues, axis=0)
             #     np.save(folder_path + "pred.npy", preds)
             #     np.save(folder_path + "true.npy", trues)
 
-        return np.concatenate(preds),np.concatenate( trues)
+        return np.concatenate(preds), np.concatenate(trues)
 
     def _process_one_batch(self, dataset_object, batch_x, batch_y, inverse=False):
         batch_x = [x.float().to(self.device) for x in batch_x]

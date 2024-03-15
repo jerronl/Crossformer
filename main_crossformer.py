@@ -119,7 +119,8 @@ if args.use_gpu and args.use_multi_gpu:
     args.gpu = args.device_ids[0]
     print(args.gpu)
 
-batch_size=args.batch_size
+batch_size = args.batch_size
+
 
 def update_args(itr):
     if args.data in data_parser.keys():
@@ -147,18 +148,6 @@ def update_args(itr):
 
 data_parser = {
     "vols": {
-        #     "patience":30,
-        #     "train_epochs":1000,
-        # 'data_split':[0.7,0.1,0.2],
-        "batch_size": 32,
-        "cutday": (
-            "#2024-01-10",
-            "#2024-02-07",
-        ),
-    },
-}
-data_parser = {
-    "vols": {
         "patience": 1,
         "train_epochs": 1,
         "learning_rate": 2e-3,
@@ -167,6 +156,7 @@ data_parser = {
         "e_layers": 5,
         "d_model": 512,
         "lradj": "type2",
+        # "cutday": "#2024-02-01",
     },
 }
 
@@ -183,5 +173,7 @@ for ii in range(args.itr):
     print(preds.shape, trues.shape)
 
     exp.train(setting, "prcs")
-    preds, trues = exp.test(setting, 'prcs', True, data_path=[tables[-1]], inverse=True)
-    print(preds.shape, trues.shape)
+    tables = ["volvG.csv", "volvT.csv"]
+    for table in tables:
+        preds, trues = exp.test(setting, "prcs", True, data_path=[table], inverse=True)
+        print(preds.shape, trues.shape)

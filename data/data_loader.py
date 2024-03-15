@@ -121,21 +121,28 @@ class DatasetMTS(Dataset):
                     df["day"] = pd.to_datetime(df["date"].str.replace("#", "")).dt.date
                     df["horizon"] = df[f"dtm0_{self.in_len}"] - df["dtm0"]
                     lasttime = df.groupby(["day"])["date"].max().values
-                    if self.cutday is not None:
-                        df = df[
+                    df = (
+                        df[(df["date"].isin(lasttime)) & (df["horizon"] > 0)]
+                        if self.cutday is None
+                        else df[
                             (df["date"] > self.cutday[0])
                             & (df["date"] < self.cutday[1])
                             & (df["date"].isin(lasttime))
                             & (df["horizon"] > 0)
-                        ].sort_values(by=["horizon", "date",])
+                        ].sort_values(
+                            by=[
+                                "horizon",
+                                "date",
+                            ]
+                        )
+                    )
+                if isinstance(data_split[0], float):
+                    ds = (data_split * uniform(0.8, 0.9) * len(df)).astype(int)
+                    self.data_split.append(ds)
+                    if self.cutday is not None:
                         ds = [0, 0, 0, len(df) - 1]
-                    else:
-                        df = df[(df["date"].isin(lasttime)) & (df["horizon"] > 0)]
-                        if isinstance(data_split[0], float):
-                            ds = (data_split * uniform(0.8, 0.9) * len(df)).astype(int)
-                            self.data_split.append(ds)
-                        else:
-                            ds = data_split[it]
+                else:
+                    ds = data_split[it]
 
                 print(table, df["date"].iloc[ds])
                 df["date"] = np.vectorize(excel_date)(df["date"])

@@ -20,8 +20,13 @@ epoch0 = datetime(1899, 12, 31)
 
 def excel_date(x):
     delta = (
-        datetime(int(x[1:5]),int(x[6:8]),int(x[9:11]),
-                 int(x[12:14]),int(x[15:17]),int(x[18:20]),
+        datetime(
+            int(x[1:5]),
+            int(x[6:8]),
+            int(x[9:11]),
+            int(x[12:14]),
+            int(x[15:17]),
+            int(x[18:20]),
         )
         - epoch0
     )
@@ -43,7 +48,7 @@ def cyclic_t(x):
     elif np.issubdtype(x.dtype, datetime):
         t = np.vectorize(lambda x: x.timetuple())(x)
     else:
-        raise TypeError(f'unsuported type {x.dtype}')
+        raise TypeError(f"unsuported type {x.dtype}")
     tm_yday = cyclic_encode(
         t[7] - 1, np.vectorize(lambda x: 365 - 28 + calendar.monthrange(x, 2)[1])(t[0])
     )
@@ -84,7 +89,7 @@ class DatasetMTS(Dataset):
         self.in_len = in_len
         self.root_path = root_path
         self.data_path = data_path
-        self.data_split = np.cumsum([0] + data_split)
+        self.data_split = data_split
         self.data_name = data_name
         self.cutday = cutday
         self.scaler = scaler
@@ -98,28 +103,40 @@ class DatasetMTS(Dataset):
             self.data = self.__class__.datas[self.data_name + str(self.data_path)]
             return
         df_raws = [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
-        if isinstance(self.data_path,pd.DataFrame):
-            df_raws[self.set_type]=self.data_path
+        if isinstance(self.data_path, pd.DataFrame):
+            df_raws[self.set_type] = self.data_path
         else:
-            for table in self.data_path:
-                df = pd.read_csv(os.path.join(self.root_path, table))
-                if self.cutday is not None:
-                    df["day"] = pd.to_datetime(df["date"].str.replace("#", "")).dt.date
-                    df["horizon"] = df[f"e2d_{self.in_len}"] - df["e2d"]
-                    lasttime = df.groupby(["day"])["date"].max().values
-                    df = df[
-                        (df["date"] > self.cutday[0])
-                        & (df["date"] < self.cutday[1])
-                        & (df["date"].isin(lasttime))
-                        & (df["horizon"] > 0)
-                    ].sort_values(by=["horizon", "day", f"e2d_{self.in_len}"])
-                df = df.replace(-99999, float("nan"))
-                df = df[~df["dtm0"].isna()]
-                ds = (
-                    (self.data_split * uniform(.8,.9) * len(df)).astype(int)
-                    if self.cutday is None
-                    else [0, 0, 0, len(df) - 1]
+            if isinstance(self.data_split[0], float):
+                data_split = np.cumsum([0] + self.data_split)
+                self.data_split = []
+            else:
+                data_split = self.data_split
+
+            for it, table in enumerate(self.data_path):
+                df = pd.read_csv(os.path.join(self.root_path, table)).replace(
+                    -99999, float("nan")
                 )
+                df = df[~df["dtm0"].isna()]
+                if self.cutday is not None or self.data_name == "prcs":
+                    df["day"] = pd.to_datetime(df["date"].str.replace("#", "")).dt.date
+                    df["horizon"] = df[f"dtm0_{self.in_len}"] - df["dtm0"]
+                    lasttime = df.groupby(["day"])["date"].max().values
+                    if self.cutday is not None:
+                        df = df[
+                            (df["date"] > self.cutday[0])
+                            & (df["date"] < self.cutday[1])
+                            & (df["date"].isin(lasttime))
+                            & (df["horizon"] > 0)
+                        ].sort_values(by=["horizon", "date",])
+                        ds = [0, 0, 0, len(df) - 1]
+                    else:
+                        df = df[(df["date"].isin(lasttime)) & (df["horizon"] > 0)]
+                        if isinstance(data_split[0], float):
+                            ds = (data_split * uniform(0.8, 0.9) * len(df)).astype(int)
+                            self.data_split.append(ds)
+                        else:
+                            ds = data_split[it]
+
                 print(table, df["date"].iloc[ds])
                 df["date"] = np.vectorize(excel_date)(df["date"])
                 for i, df_raw in enumerate(df_raws):
@@ -127,11 +144,12 @@ class DatasetMTS(Dataset):
                         [
                             df_raw,
                             df.iloc[ds[i] : ds[i + 1]],
-                            df.iloc[ds[-1] :] if i == 0 else pd.DataFrame(),
                         ]
                     )
+                i = 0 if ds[1] else self.set_type
+                df_raws[i] = pd.concat([df_raws[i], df.iloc[ds[-1] :]])
         cols = data_columns(self.data_name)
-        vnp, vnpt, vpc, vvs, vy, vpct=data_names(cols, self.in_len)
+        vnp, vnpt, vpc, vvs, vy, vpct = data_names(cols, self.in_len)
         xnp, xpc, xvsp, xvs, y, cyclics = [], [], [], [], [], []
         for i, df_raw in enumerate(df_raws):
             if len(df_raw.columns) < 1:

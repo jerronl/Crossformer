@@ -175,13 +175,13 @@ for ii in range(args.itr):
     setting = update_args(ii)
 
     exp = Exp_crossformer(args)  # set experiments
-    print(f">>>>>>>start training : {setting}>>>>>>>>>>>>>>>>>>>>>>>>>>")
-    exp.train(setting, "vols")
+    # print(f">>>>>>>start training : {setting}>>>>>>>>>>>>>>>>>>>>>>>>>>")
+    # exp.train(setting, "vols")
 
-    print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-    preds, trues = exp.test(setting, "vols", True, data_path=[tables[-1]], inverse=True)
+    # print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+    # preds, trues = exp.test(setting, "vols", True, data_path=[tables[-1]], inverse=True)
+    # print(preds.shape, trues.shape)
+
+    exp.train(setting, "prcs")
+    preds, trues = exp.test(setting, 'prcs', True, data_path=[tables[-1]], inverse=True)
     print(preds.shape, trues.shape)
-
-#   exp.train(setting, "prcs")
-#   preds, trues = exp.test(setting, 'prcs', True, data_path=[tables[-1]], inverse=True)
-#   print(preds.shape, trues.shape)

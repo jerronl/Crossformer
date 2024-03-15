@@ -24,7 +24,7 @@ warnings.filterwarnings("ignore")
 # class MSLELoss(nn.Module):
 #     def __init__(self):
 #         super(MSLELoss, self).__init__()
-    
+
 #     def forward(self, predicted, actual):
 #         # Adding a small number to ensure the log function receives values > 0
 #         return torch.mean((torch.log(predicted + 1) - torch.log(actual + 1)) ** 2)
@@ -32,7 +32,7 @@ warnings.filterwarnings("ignore")
 # class MSLELoss(nn.Module):
 #     def __init__(self):
 #         super(MSLELoss, self).__init__()
-    
+
 #     def forward(self, predicted, actual):
 #         mse, cel = nn.MSELoss(), nn.CrossEntropyLoss()
 
@@ -61,27 +61,28 @@ warnings.filterwarnings("ignore")
 
 #         return torch.mean((torch.log(predicted + 1) - torch.log(actual + 1)) ** 2)
 
+
 class Exp_crossformer(Exp_Basic):
     def __init__(self, args=None):
         if args is None:
-            args=Namespace()
-            args.in_len=20
-            args.out_len=1
-            args.seg_len=5
-            args.win_size=2
-            args.factor=10
-            args.d_model=512
-            args.d_ff=512
-            args.n_heads=4
-            args.e_layers=5
-            args.dropout=0.2
-            args.baseline=False
-            args.use_gpu=True
-            args.gpu=0
-            args.batch_size=1024
-            args.cutday=args.data_split=args.root_path=None
-            args.checkpoints="./checkpoints/"
-            args.num_workers=0
+            args = Namespace()
+            args.in_len = 20
+            args.out_len = 1
+            args.seg_len = 5
+            args.win_size = 2
+            args.factor = 10
+            args.d_model = 512
+            args.d_ff = 512
+            args.n_heads = 4
+            args.e_layers = 5
+            args.dropout = 0.2
+            args.baseline = False
+            args.use_gpu = True
+            args.gpu = 0
+            args.batch_size = 1024
+            args.cutday = args.data_split = args.root_path = None
+            args.checkpoints = "./checkpoints/"
+            args.num_workers = 0
         super(Exp_crossformer, self).__init__(args)
         self.ycat = self.model = None
 
@@ -108,7 +109,7 @@ class Exp_crossformer(Exp_Basic):
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
         self.model = model.to(self.device)
 
-    def _get_data(self, flag, data=None, data_path=None, scaler=None):
+    def _get_data(self, flag, data=None, data_path=None, scaler=None, data_split=None):
         args = self.args
 
         if flag == "test":
@@ -125,7 +126,7 @@ class Exp_crossformer(Exp_Basic):
             data_name=data or args.data,
             flag=flag,
             in_len=args.in_len,
-            data_split=args.data_split,
+            data_split=data_split or args.data_split,
             cutday=args.cutday,
             scaler=scaler,
         )
@@ -188,14 +189,33 @@ class Exp_crossformer(Exp_Basic):
         return total_loss
 
     def train(self, setting, data):
-        train_data, train_loader = self._get_data(flag="train", data=data)
-        vali_data, vali_loader = self._get_data(flag="val", data=data)
-        test_data, test_loader = self._get_data(flag="test", data=data)
-        self.build_model(train_data)
-
+        checkpoint = data_split = None
         path = os.path.join(self.args.checkpoints, setting + data)
         if not os.path.exists(path):
             os.makedirs(path)
+        if self.args.resume:
+            best_model_path = path + "/" + "checkpoint.pth"
+            try:
+                checkpoint = torch.load(best_model_path)
+                if len(checkpoint) > 1:
+                    data_split = checkpoint[0][4]
+            except (
+                FileNotFoundError,
+                RuntimeError,
+                IndexError,
+                pickle.UnpicklingError,
+            ) as e:
+                print("\033[91mfailed to load", e, best_model_path, "\033[0m")
+        train_data, train_loader = self._get_data(
+            flag="train", data=data, data_split=data_split
+        )
+        vali_data, vali_loader = self._get_data(
+            flag="val", data=data, data_split=data_split
+        )
+        test_data, test_loader = self._get_data(
+            flag="test", data=data, data_split=data_split
+        )
+        self.build_model(train_data)
 
         train_steps = len(train_loader)
 
@@ -203,10 +223,8 @@ class Exp_crossformer(Exp_Basic):
         criterion = self._select_criterion(self.ycat)
         score = None
         spoch = 0
-        if self.args.resume:
-            best_model_path = path + "/" + "checkpoint.pth"
+        if checkpoint is not None:
             try:
-                checkpoint = torch.load(best_model_path)
                 self.model.load_state_dict(checkpoint[0][0])
                 model_optim.load_state_dict(checkpoint[0][1])
                 score = abs(checkpoint[1])
@@ -217,7 +235,6 @@ class Exp_crossformer(Exp_Basic):
                     "\033[0m",
                 )
             except (
-                FileNotFoundError,
                 RuntimeError,
                 IndexError,
                 pickle.UnpicklingError,
@@ -244,7 +261,7 @@ class Exp_crossformer(Exp_Basic):
 
                 if (i + 1) % 100 == 0:
                     print(
-                        "\titers: {0}, epoch: {1} | loss: {2:.7f}".format(
+                        "\titers: {0:.3f}, epoch: {1} | loss: {2:.7f}".format(
                             i + 1, epoch + 1, loss.item()
                         )
                     )
@@ -269,7 +286,7 @@ class Exp_crossformer(Exp_Basic):
             test_loss = self.vali(test_data, test_loader, criterion)
 
             print(
-                "Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
+                "Epoch: {0:.3f}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
                     epoch + 1, train_steps, train_loss, vali_loss, test_loss
                 )
             )
@@ -280,6 +297,7 @@ class Exp_crossformer(Exp_Basic):
                     model_optim.state_dict(),
                     epoch,
                     train_data.scaler,
+                    train_data.data_split,
                 ),
                 path,
             )
@@ -302,11 +320,22 @@ class Exp_crossformer(Exp_Basic):
             else self.model.state_dict()
         )
         torch.save(checkpoint, path + "/" + "checkpoint.pth")
-        torch.save((self.model, checkpoint[0][3]), path + "/" + "crossformer.pkl")
+        torch.save(
+            (self.model, checkpoint[0][3], checkpoint[0][4]),
+            path + "/" + "crossformer.pkl",
+        )
 
         return self.model
 
-    def test(self, setting="model", data="vols", save_pred=False, inverse=False, data_path=None, run_metric=True):
+    def test(
+        self,
+        setting="model",
+        data="vols",
+        save_pred=False,
+        inverse=False,
+        data_path=None,
+        run_metric=True,
+    ):
         if self.model is None:
             best_model_path = (
                 os.path.join(self.args.checkpoints, setting + data) + "/crossformer.pkl"
@@ -323,9 +352,13 @@ class Exp_crossformer(Exp_Basic):
             ) as e:
                 print("\033[91mfailed to load", e, best_model_path, "\033[0m")
         else:
-            checkpoint=(None,None)
+            checkpoint = (None, None, None)
         test_data, test_loader = self._get_data(
-            data=data, flag="test", scaler=checkpoint[1], data_path=data_path
+            data=data,
+            flag="test",
+            scaler=checkpoint[1],
+            data_path=data_path,
+            data_split=checkpoint[2],
         )
 
         self.model.eval()
@@ -368,18 +401,19 @@ class Exp_crossformer(Exp_Basic):
                 os.makedirs(folder_path)
 
             mae, mse, rmse, mape, mspe, accr = metrics_mean
-            print("\033[93mmse:{}, mae:{}".format(mse, mae), metrics_mean, "\033[0m")
+            print(f"\033[93mmae:{mae:.3f}, mse:{mse:.3f}, rmse:{rmse:.3f}, mape:{mape:.3f}, mspe:{mspe:.3f}, accr:{accr} \033[0m")
 
-            np.save(
-                folder_path + "metrics.npy", np.array([mae, mse, rmse, mape, mspe, accr])
-            )
-            if save_pred:
-                preds = np.concatenate(preds, axis=0)
-                trues = np.concatenate(trues, axis=0)
-                np.save(folder_path + "pred.npy", preds)
-                np.save(folder_path + "true.npy", trues)
+            # np.save(
+            #     folder_path + "metrics.npy",
+            #     np.array([mae, mse, rmse, mape, mspe, accr]),
+            # )
+            # if save_pred:
+            #     preds = np.concatenate(preds, axis=0)
+            #     trues = np.concatenate(trues, axis=0)
+            #     np.save(folder_path + "pred.npy", preds)
+            #     np.save(folder_path + "true.npy", trues)
 
-        return preds, trues
+        return np.concatenate(preds),np.concatenate( trues)
 
     def _process_one_batch(self, dataset_object, batch_x, batch_y, inverse=False):
         batch_x = [x.float().to(self.device) for x in batch_x]
@@ -451,7 +485,7 @@ class Exp_crossformer(Exp_Basic):
             os.makedirs(folder_path)
 
         mae, mse, rmse, mape, mspe = metrics_mean
-        print("mse:{}, mae:{}".format(mse, mae))
+        print("mse:{:.3f}, mae:{}".format(mse, mae))
 
         np.save(folder_path + "metrics.npy", np.array([mae, mse, rmse, mape, mspe]))
         if save_pred:

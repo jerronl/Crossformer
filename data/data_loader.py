@@ -59,15 +59,18 @@ def cyclic_t(x):
     return tm_yday + tm_mday + tm_wday
 
 
-def cyclic(x, c):
-    cyclics = []
-    for v, p in c:
-        cyclics += cyclic_encode(x[:, v], p)
-    return cyclics
+# def cyclic(x, c):
+#     cyclics = []
+#     for v, p in c:
+#         cyclics += cyclic_encode(x[:, v], p)
+#     return cyclics
 
 
 class DatasetMTS(Dataset):
     datas = {}
+    @classmethod
+    def clear(cls):
+        cls.datas={}
 
     def __init__(
         self,
@@ -102,6 +105,7 @@ class DatasetMTS(Dataset):
         if self.data_name + str(self.data_path) in self.datas:
             self.data = self.__class__.datas[self.data_name + str(self.data_path)]
             return
+        cols = data_columns(self.data_name)
         df_raws = [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
         if isinstance(self.data_path, pd.DataFrame):
             df_raws[self.set_type] = self.data_path
@@ -117,6 +121,8 @@ class DatasetMTS(Dataset):
                     -99999, float("nan")
                 )
                 df = df[~df["dtm0"].isna()]
+                if not cols["xvsp"] and "spot" in df.columns:
+                    df.drop(columns="spot")
                 if self.cutday is not None or self.data_name == "prcs":
                     df["day"] = pd.to_datetime(df["date"].str.replace("#", "")).dt.date
                     df["horizon"] = df[f"dtm0_{self.in_len}"] - df["dtm0"]
@@ -161,7 +167,6 @@ class DatasetMTS(Dataset):
                     )
                 i = 0 if ds[1] else self.set_type
                 df_raws[i] = pd.concat([df_raws[i], df.iloc[ds[-1] :]])
-        cols = data_columns(self.data_name)
         vnp, vnpt, vpc, vvs, vy, vpct = data_names(cols, self.in_len)
         xnp, xpc, xvsp, xvs, y, cyclics = [], [], [], [], [], []
         for i, df_raw in enumerate(df_raws):

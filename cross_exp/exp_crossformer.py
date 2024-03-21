@@ -84,7 +84,8 @@ class Exp_crossformer(Exp_Basic):
             args.checkpoints = "./checkpoints/"
             args.num_workers = 0
         super(Exp_crossformer, self).__init__(args)
-        self.ycat = self.model = self.checkpoint = None
+        self.ycat = self.model = None
+        self.checkpoint = {}
 
     def build_model(self, data):
         model = Crossformer(
@@ -190,7 +191,8 @@ class Exp_crossformer(Exp_Basic):
 
     def train(self, setting, data):
         checkpoint = data_split = None
-        path = os.path.join(self.args.checkpoints, setting + data)
+        key = setting + data
+        path = os.path.join(self.args.checkpoints, key)
         if not os.path.exists(path):
             os.makedirs(path)
         if self.args.resume:
@@ -320,9 +322,9 @@ class Exp_crossformer(Exp_Basic):
             else self.model.state_dict()
         )
         torch.save(checkpoint, path + "/checkpoint.pth")
-        self.checkpoint = (self.model, checkpoint[0][3], checkpoint[0][4])
+        self.checkpoint[key] = (self.model, checkpoint[0][3], checkpoint[0][4])
         torch.save(
-            self.checkpoint,
+            self.checkpoint[key],
             path + "/crossformer.pkl",
         )
 
@@ -337,13 +339,14 @@ class Exp_crossformer(Exp_Basic):
         data_path=None,
         run_metric=True,
     ):
-        if self.checkpoint is None:
+        key = setting + data
+        if key not in self.checkpoint:
             best_model_path = (
-                os.path.join(self.args.checkpoints, setting + data) + "/crossformer.pkl"
+                os.path.join(self.args.checkpoints, key) + "/crossformer.pkl"
             )
             try:
-                self.checkpoint = torch.load(best_model_path)
-                self.model = self.checkpoint[0]
+                self.checkpoint[key] = torch.load(best_model_path)
+                self.model = self.checkpoint[key][0]
                 print("\033[92msuc to load", best_model_path, "\033[0m")
             except (
                 FileNotFoundError,
@@ -355,9 +358,11 @@ class Exp_crossformer(Exp_Basic):
         test_data, test_loader = self._get_data(
             data=data,
             flag="test",
-            scaler=self.checkpoint[1],
+            scaler=self.checkpoint[key][1],
             data_path=data_path,
-            data_split=self.checkpoint[2] if len(self.checkpoint) > 2 else None,
+            data_split=(
+                self.checkpoint[key][2] if len(self.checkpoint[key]) > 2 else None
+            ),
         )
 
         self.model.eval()

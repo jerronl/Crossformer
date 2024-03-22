@@ -68,9 +68,10 @@ def cyclic_t(x):
 
 class DatasetMTS(Dataset):
     datas = {}
+
     @classmethod
     def clear(cls):
-        cls.datas={}
+        cls.datas = {}
 
     def __init__(
         self,
@@ -111,7 +112,7 @@ class DatasetMTS(Dataset):
             df_raws[self.set_type] = self.data_path
         else:
             if isinstance(self.data_split, dict):
-                data_split = self.data_split
+                data_split = np.array([0, 0.7, 0.85, 1])
             else:
                 data_split = np.cumsum([0] + self.data_split)
                 self.data_split = {}
@@ -142,16 +143,10 @@ class DatasetMTS(Dataset):
                             ]
                         )
                     )
-                if isinstance(data_split[0], dict) and table in data_split:
-                    ds = data_split[table]
+                if table in self.data_split:
+                    ds = self.data_split[table]
                 else:
-                    if not hasattr(data_split, "__getitem__") or not isinstance(
-                        data_split[0], float
-                    ):
-                        data_split = [0, 0.7, 0.85, 1]
-                    ds = (np.array(data_split) * uniform(0.8, 0.9) * len(df)).astype(
-                        int
-                    )
+                    ds = (data_split * uniform(0.8, 0.9) * len(df)).astype(int)
                     self.data_split[table] = ds
                     if self.cutday is not None:
                         ds = [0, 0, 0, len(df) - 1]

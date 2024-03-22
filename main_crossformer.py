@@ -5,7 +5,7 @@ tables = [
     "volvG.csv",
 ]
 tables = [
-    "volvG.csv",
+    "volvG.csv","volvA.csv",
 ]
 mydrive = "E:/mydoc/git/trade/analyics/"
 
@@ -167,6 +167,7 @@ for ii in range(args.itr):
 
     exp = Exp_crossformer(args)  # set experiments
     print(f">>>>>>>start training : {setting}>>>>>>>>>>>>>>>>>>>>>>>>>>")
+    tables = ["volvG.csv", "volvN.csv"]
     exp.train(setting, "vols")
 
     print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
@@ -174,7 +175,6 @@ for ii in range(args.itr):
     print(preds.shape, trues.shape)
 
     exp.train(setting, "prcs")
-    tables = ["volvG.csv", "volvT.csv"]
     for table in tables:
         preds, trues = exp.test(setting, "prcs", True, data_path=[table], inverse=True)
         print(preds.shape, trues.shape)

@@ -156,6 +156,7 @@ data_parser = {
         "e_layers": 5,
         "d_model": 512,
         "lradj": "type2",
+        "itr":3,
         # "cutday": "#2024-02-01",
     },
 }

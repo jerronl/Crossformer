@@ -1,6 +1,6 @@
 def data_columns(data):
     return {'vols':{
-        'vs':[  'date', 'e2d', 'dtm0',      ],
+        'vs':[ 'date', 'e2d', 'dtm0', 'vol',],
         'vm':[ f'{v}{d}' for d in range(4)
               for v in 
               [ 'level','slope','curve',]   ], 
@@ -15,7 +15,7 @@ def data_columns(data):
         'ycat':0,
         'xvsp':True,
     },'prcs':{
-        'vs':[  'date', 'e2d', 'dtm0',      ],
+        'vs':[ 'date', 'e2d', 'dtm0', 'vol',],
         'vm':[ f'{v}{d}' for d in range(4)
               for v in 
               [ 'level','slope','curve',]   ], 

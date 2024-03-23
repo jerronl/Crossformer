@@ -135,21 +135,16 @@ class DatasetMTS(Dataset):
                             (df["date"] > self.cutday[0])
                             & (df["date"] < self.cutday[1])
                             & (df["date"].isin(lasttime))
-                            & (df["horizon"] > 0)
-                        ].sort_values(
-                            by=[
-                                "horizon",
-                                "date",
-                            ]
-                        )
+                            & (df["horizon"] > 0.1)
+                        ]
                     )
-                if table in self.data_split:
+                if self.cutday is not None:
+                    ds = [0, 0, 0, len(df) - 1]
+                elif table in self.data_split:
                     ds = self.data_split[table]
                 else:
                     ds = (data_split * uniform(0.8, 0.9) * len(df)).astype(int)
                     self.data_split[table] = ds
-                    if self.cutday is not None:
-                        ds = [0, 0, 0, len(df) - 1]
 
                 print(table, df["date"].iloc[ds])
                 df["date"] = np.vectorize(excel_date)(df["date"])

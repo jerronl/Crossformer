@@ -157,7 +157,7 @@ data_parser = {
         "d_model": 512,
         "lradj": "type2",
         "itr":3,
-        # "cutday": "#2024-02-01",
+        "cutday": ("#2024-02-15","#2024-03-22",),
     },
 }
 
@@ -171,7 +171,7 @@ for ii in range(args.itr):
     exp.train(setting, "vols")
 
     print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-    preds, trues = exp.test(setting, "vols", True, data_path=[tables[-1]], inverse=True)
+    preds, trues = exp.test(setting, "vols", True, data_path=[tables[0]], inverse=True)
     print(preds.shape, trues.shape)
 
     exp.train(setting, "prcs")

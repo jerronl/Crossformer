@@ -63,26 +63,7 @@ warnings.filterwarnings("ignore")
 
 
 class Exp_crossformer(Exp_Basic):
-    def __init__(self, args=None):
-        if args is None:
-            args = Namespace()
-            args.in_len = 20
-            args.out_len = 1
-            args.seg_len = 5
-            args.win_size = 2
-            args.factor = 10
-            args.d_model = 512
-            args.d_ff = 512
-            args.n_heads = 4
-            args.e_layers = 5
-            args.dropout = 0.2
-            args.baseline = False
-            args.use_gpu = True
-            args.gpu = 0
-            args.batch_size = 1024
-            args.cutday = args.data_split = args.root_path = None
-            args.checkpoints = "./checkpoints/"
-            args.num_workers = 0
+    def __init__(self, args):
         super(Exp_crossformer, self).__init__(args)
         self.ycat = self.model = None
         self.checkpoint = {}
@@ -128,7 +109,7 @@ class Exp_crossformer(Exp_Basic):
             flag=flag,
             in_len=args.in_len,
             data_split=data_split or args.data_split,
-            cutday=args.cutday,
+            query=args.query,
             scaler=scaler,
         )
 
@@ -346,7 +327,6 @@ class Exp_crossformer(Exp_Basic):
             )
             try:
                 self.checkpoint[key] = torch.load(best_model_path)
-                self.model = self.checkpoint[key][0]
                 print("\033[92msuc to load", best_model_path, "\033[0m")
             except (
                 FileNotFoundError,
@@ -355,6 +335,7 @@ class Exp_crossformer(Exp_Basic):
                 pickle.UnpicklingError,
             ) as e:
                 print("\033[91mfailed to load", e, best_model_path, "\033[0m")
+        self.model = self.checkpoint[key][0]
         test_data, test_loader = self._get_data(
             data=data,
             flag="test",

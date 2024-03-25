@@ -14,12 +14,18 @@ from data.data_def import data_columns, data_names
 
 warnings.filterwarnings("ignore")
 
+# Todo: fix this bug
+epoch0 = datetime(1899, 12, 30)
+# base_date = datetime(1899, 12, 30)
 
-epoch0 = datetime(1899, 12, 31)
+
+def datetime_to_excel_serial(dt):
+    delta = dt - epoch0
+    return delta.days + delta.seconds / 86400  # (24 * 60 * 60)
 
 
 def excel_date(x):
-    delta = (
+    return datetime_to_excel_serial(
         datetime(
             int(x[1:5]),
             int(x[6:8]),
@@ -28,9 +34,7 @@ def excel_date(x):
             int(x[15:17]),
             int(x[18:20]),
         )
-        - epoch0
     )
-    return float(delta.days) + (float(delta.seconds) / 86400)
 
 
 def cyclic_encode(original, period):
@@ -81,7 +85,7 @@ class DatasetMTS(Dataset):
         in_len,
         flag="train",
         data_split=None,
-        cutday=False,
+        query=False,
         scaler=None,
     ):
         if data_split is None:
@@ -95,7 +99,7 @@ class DatasetMTS(Dataset):
         self.data_path = data_path
         self.data_split = data_split
         self.data_name = data_name
-        self.cutday = cutday
+        self.query = query
         self.scaler = scaler
         self.__read_data__()
         self.shape = self.data[2][self.set_type][0]
@@ -124,21 +128,14 @@ class DatasetMTS(Dataset):
                 df = df[~df["dtm0"].isna()]
                 if not cols["xvsp"] and "spot" in df.columns:
                     df.drop(columns="spot")
-                if self.cutday is not None or self.data_name == "prcs":
+                if self.query is not None or self.data_name == "prcs":
                     df["day"] = pd.to_datetime(df["date"].str.replace("#", "")).dt.date
                     df["horizon"] = df[f"dtm0_{self.in_len}"] - df["dtm0"]
                     lasttime = df.groupby(["day"])["date"].max().values
-                    df = (
-                        df[(df["date"].isin(lasttime)) & (df["horizon"] > 0)]
-                        if self.cutday is None
-                        else df[
-                            (df["date"] > self.cutday[0])
-                            & (df["date"] < self.cutday[1])
-                            & (df["date"].isin(lasttime))
-                            & (df["horizon"] > 0.1)
-                        ]
-                    )
-                if self.cutday is not None:
+                    df = df[(df["date"].isin(lasttime)) & (df["horizon"] > 0)]
+
+                if self.query is not None:
+                    df = df.query(self.query)
                     ds = [0, 0, 0, len(df) - 1]
                 elif table in self.data_split:
                     ds = self.data_split[table]
@@ -163,7 +160,7 @@ class DatasetMTS(Dataset):
             if len(df_raw.columns) < 1:
                 df_raw = pd.DataFrame(columns=df_raws[self.set_type].columns)
                 df_raws[i] = df_raw
-            xnp.append(df_raw[vnpt].values.reshape((-1, len(vnp))))
+            xnp.append(df_raw[vnpt].values.astype(float).reshape((-1, len(vnp))))
             xpc.append(df_raw[vpct].values.reshape((-1, 1)))
             y.append(df_raw[vy].values)
             assert (

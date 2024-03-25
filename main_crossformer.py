@@ -5,7 +5,8 @@ tables = [
     "volvG.csv",
 ]
 tables = [
-    "volvG.csv","volvA.csv",
+    "volvG.csv",
+    "volvA.csv",
 ]
 mydrive = "E:/mydoc/git/trade/analyics/"
 
@@ -98,7 +99,7 @@ parser.add_argument(
 
 parser.add_argument("--use_gpu", type=bool, default=True, help="use gpu")
 parser.add_argument("--resume", type=bool, default=True, help="resume")
-parser.add_argument("--cutday", type=str, default=None, help="resume")
+parser.add_argument("--query", type=str, default=None, help="resume")
 # parser.add_argument("--use_gpu", type=bool, default=False, help="use gpu")
 parser.add_argument("--gpu", type=int, default=0, help="gpu")
 parser.add_argument(
@@ -156,10 +157,58 @@ data_parser = {
         "e_layers": 5,
         "d_model": 512,
         "lradj": "type2",
-        "itr":3,
-        "cutday": ("#2024-02-15","#2024-03-22",),
+        "itr": 3,
+        "query": "date>'#2024-02-15' and date<'#2024-03-22'",
     },
 }
+
+tables = [
+    "volvN.csv",
+]
+data_parser = {
+    "vols": {
+        "e_layers": 5,
+        "d_model": 512,
+        "query": "date>'#2024-02-15' and date<'#2024-03-22' and e2d_20==5",
+    },
+}
+from data.data_loader import DatasetMTS
+import pandas as pd
+
+results = []
+DatasetMTS.clear()
+setting = update_args(0)
+exp = Exp_crossformer(args)
+# df=pd.read_csv(r'E:\mydoc\git\trade/input.csv')
+# results.append(
+#     exp.test(
+#         data="vols",
+#         save_pred=True,
+#         inverse=True,
+#         run_metric=False,
+#         data_path=df,
+#     )
+# )
+print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+for table in tables:
+    # results.append(
+    #     exp.test(
+    #         data="vols",
+    #         save_pred=True,
+    #         inverse=True,
+    #         run_metric=False,
+    #         data_path=[table],
+    #     )
+    # )
+    results.append(
+        exp.test(
+            data="prcs",
+            save_pred=True,
+            inverse=True,
+            run_metric=False,
+            data_path=[table],
+        )
+    )
 
 for ii in range(args.itr):
     # setting record of experiments

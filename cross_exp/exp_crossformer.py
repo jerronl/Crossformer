@@ -8,6 +8,7 @@ import numpy as np
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import optim
 from torch.utils.data import DataLoader
 from torch.nn import DataParallel
@@ -291,7 +292,7 @@ class Exp_crossformer(Exp_Basic):
             if early_stopping.counter > 1:
                 adjust_learning_rate(model_optim, epoch + 1 - spoch, self.args)
             else:
-                spoch += 1
+                spoch += 2
 
         best_model_path = path + "/" + "checkpoint.pth"
         checkpoint = list(torch.load(best_model_path))
@@ -411,9 +412,12 @@ class Exp_crossformer(Exp_Basic):
         outputs = self.model(batch_x)
 
         if inverse:
+            if dataset_object.ycat > 0:
+                outputs[:, :, -dataset_object.ycat :] = F.softmax(
+                    outputs[:, :, -dataset_object.ycat :], 2
+                )
             outputs = dataset_object.inverse_transform(outputs)
             batch_y = dataset_object.inverse_transform(batch_y)
-
         return outputs, batch_y
 
     def eval(self, setting, save_pred=False, inverse=False):

@@ -158,7 +158,7 @@ data_parser = {
         "d_model": 512,
         "lradj": "type2",
         "itr": 3,
-        "query": "date>'#2024-02-15' and date<'#2024-03-22'",
+        # "query": "date>'#2024-02-15' and date<'#2024-03-22'",
     },
 }
 
@@ -169,7 +169,7 @@ data_parser = {
     "vols": {
         "e_layers": 5,
         "d_model": 512,
-        "query": "date>'#2024-02-15' and date<'#2024-03-22' and e2d_20==5",
+        "query": "date>'#2024-02-15 15:20' and date<'#2024-03-22' "#and e2d_20==3",
     },
 }
 from data.data_loader import DatasetMTS
@@ -191,15 +191,15 @@ exp = Exp_crossformer(args)
 # )
 print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
 for table in tables:
-    # results.append(
-    #     exp.test(
-    #         data="vols",
-    #         save_pred=True,
-    #         inverse=True,
-    #         run_metric=False,
-    #         data_path=[table],
-    #     )
-    # )
+    results.append(
+        exp.test(
+            data="vols",
+            save_pred=True,
+            inverse=True,
+            run_metric=False,
+            data_path=[table],
+        )
+    )
     results.append(
         exp.test(
             data="prcs",

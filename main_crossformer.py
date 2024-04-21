@@ -169,7 +169,7 @@ data_parser = {
     "vols": {
         "e_layers": 5,
         "d_model": 512,
-        "query": "date>'#2024-02-15 15:20' and date<'#2024-03-22' "#and e2d_20==3",
+        "query": "date>'#2024-02-30' and date<'#2024-04-22' "#and e2d_20==3",
     },
 }
 from data.data_loader import DatasetMTS
@@ -209,7 +209,10 @@ for table in tables:
             data_path=[table],
         )
     )
-
+# import numpy as np
+# for i in range(2):
+#     for j in range(2):
+#         np.savetxt(f'./res{i}{j}.csv',results[i][j],delimiter=",")
 for ii in range(args.itr):
     # setting record of experiments
     setting = update_args(ii)

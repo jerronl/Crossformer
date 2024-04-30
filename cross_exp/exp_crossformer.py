@@ -3,20 +3,18 @@ import time
 import pickle
 
 import warnings
-from argparse import Namespace
 import numpy as np
 
 import torch
-import torch.nn as nn
+from torch import nn, optim, isnan
 import torch.nn.functional as F
-from torch import optim
 from torch.utils.data import DataLoader
 from torch.nn import DataParallel
 
 from data.data_loader import DatasetMTS
 from cross_exp.exp_basic import Exp_Basic
 from cross_models.cross_former import Crossformer
-from utils.tools import EarlyStopping, adjust_learning_rate
+from utils.tools import EarlyStopping, adjust_learning_rate, print_color
 from utils.metrics import make_metric
 
 
@@ -41,9 +39,9 @@ warnings.filterwarnings("ignore")
 #             assert input.shape[1] == 1
 #             tv, tc = target
 #             iv, ic = input[:, :, :-ycat], input[:, 0, -ycat:]
-#             mi = torch.isnan(iv)
-#             mask = torch.isnan(tv) | mi
-#             mc = torch.isnan(ic).any(dim=1)
+#             mi = isnan(iv)
+#             mask = isnan(tv) | mi
+#             mc = isnan(ic).any(dim=1)
 #             return (
 #                 (mse(iv[~mask], tv[~mask]) ** 0.5) * 10
 #                 + cel(ic[~mc], tc[~mc])
@@ -54,8 +52,8 @@ warnings.filterwarnings("ignore")
 #             assert input.shape[1] == 1
 #             tv, _ = target
 #             iv = input
-#             mi = torch.isnan(iv)
-#             mask = torch.isnan(tv) | mi
+#             mi = isnan(iv)
+#             mask = isnan(tv) | mi
 #             return (mse(iv[~mask], tv[~mask]) ** 0.5) * 10 + mi.sum() / target[
 #                 0
 #             ].numel()
@@ -136,9 +134,9 @@ class Exp_crossformer(Exp_Basic):
             assert input.shape[1] == 1
             tv, tc = target
             iv, ic = input[:, :, :-ycat], input[:, 0, -ycat:]
-            mi = torch.isnan(iv)
-            mask = torch.isnan(tv) | mi
-            mc = torch.isnan(ic).any(dim=1)
+            mi = isnan(iv)
+            mask = isnan(tv) | mi
+            mc = isnan(ic).any(dim=1)
             return (
                 (mse(iv[~mask], tv[~mask]) ** 0.5) * 10
                 + cel(ic[~mc], tc[~mc])
@@ -149,8 +147,8 @@ class Exp_crossformer(Exp_Basic):
             assert input.shape[1] == 1
             tv, _ = target
             iv = input
-            mi = torch.isnan(iv)
-            mask = torch.isnan(tv) | mi
+            mi = isnan(iv)
+            mask = isnan(tv) | mi
             return (mse(iv[~mask], tv[~mask]) ** 0.5) * 10 + mi.sum() / target[
                 0
             ].numel()
@@ -189,7 +187,7 @@ class Exp_crossformer(Exp_Basic):
                 IndexError,
                 pickle.UnpicklingError,
             ) as e:
-                print("\033[91mfailed to load", e, best_model_path, "\033[0m")
+                print_color(91, "failed to load", e, best_model_path)
         train_data, train_loader = self._get_data(
             flag="train", data=data, data_split=data_split
         )
@@ -213,17 +211,17 @@ class Exp_crossformer(Exp_Basic):
                 model_optim.load_state_dict(checkpoint[0][1])
                 score = abs(checkpoint[1])
                 spoch = checkpoint[0][2]
-                print(
-                    f"\033[92msuc to load. score {score} epoch {spoch} from:",
+                print_color(
+                    94,
+                    f"suc to load. score {score} epoch {spoch} from:",
                     best_model_path,
-                    "\033[0m",
                 )
             except (
                 RuntimeError,
                 IndexError,
                 pickle.UnpicklingError,
             ) as e:
-                print("\033[91mfailed to load", e, best_model_path, "\033[0m")
+                print_color(91, "failed to load", e, best_model_path)
         early_stopping = EarlyStopping(
             patience=self.args.patience, verbose=True, best_score=score
         )
@@ -240,7 +238,7 @@ class Exp_crossformer(Exp_Basic):
                 model_optim.zero_grad()
                 pred, true = self._process_one_batch(train_data, batch_x, batch_y)
                 loss = criterion(pred, true)
-                assert ~torch.isnan(loss)
+                assert ~isnan(loss)
                 train_loss.append(loss.item())
 
                 if (i + 1) % 100 == 0:
@@ -286,7 +284,7 @@ class Exp_crossformer(Exp_Basic):
                 path,
             )
             if early_stopping.early_stop:
-                print("\033[95mEarly stopping\033[0m")
+                print_color(95, "Early stopping")
                 break
 
             if early_stopping.counter > 1:
@@ -328,14 +326,14 @@ class Exp_crossformer(Exp_Basic):
             )
             try:
                 self.checkpoint[key] = torch.load(best_model_path)
-                print("\033[92msuc to load", best_model_path, "\033[0m")
+                print_color(94, "suc to load", best_model_path)
             except (
                 FileNotFoundError,
                 RuntimeError,
                 IndexError,
                 pickle.UnpicklingError,
             ) as e:
-                print("\033[91mfailed to load", e, best_model_path, "\033[0m")
+                print_color(91, "failed to load", e, best_model_path)
         self.model = self.checkpoint[key][0]
         test_data, test_loader = self._get_data(
             data=data,
@@ -387,8 +385,9 @@ class Exp_crossformer(Exp_Basic):
                 os.makedirs(folder_path)
 
             mae, mse, rmse, mape, mspe, accr = metrics_mean
-            print(
-                f"\033[93mmae:{mae:.3f}, mse:{mse:.3f}, rmse:{rmse:.3f}, mape:{mape:.3f}, mspe:{mspe:.3f}, accr:{accr} \033[0m"
+            print_color(
+                93,
+                f"mae:{mae:.3f}, mse:{mse:.3f}, rmse:{rmse:.3f}, mape:{mape:.3f}, mspe:{mspe:.3f}, accr:{accr}",
             )
 
             np.save(

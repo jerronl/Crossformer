@@ -1,10 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from einops import rearrange, repeat
-import numpy as np
-
-import math
+from einops import rearrange
 
 
 def dsw(seg_len, linear, x, x2=None):

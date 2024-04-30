@@ -230,3 +230,13 @@ for ii in range(args.itr):
     for table in tables:
         preds, trues = exp.test(setting, "prcs", True, data_path=[table], inverse=True)
         print(preds.shape, trues.shape)
+
+dep_var=['pmcat','close', 'hi', 'lo',]
+for i in range(args.itr):
+  setting=update_args(i)
+  DatasetMTS.clear()
+  exp = Exp_crossformer(args)
+  print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+  results = []
+  for table in tables:
+      results.append(exp.test(setting, 'prcs', True, data_path=[table], inverse=True))

@@ -4,10 +4,10 @@ tables = [
     "volvA.csv",
     "volvG.csv",
 ]
-tables = [
-    "volvG.csv",
-    "volvA.csv",
-]
+# tables = [
+#     "volvG.csv",
+#     "volvA.csv",
+# ]
 mydrive = "E:/mydoc/git/trade/analyics/"
 
 data_parser = {
@@ -162,16 +162,16 @@ data_parser = {
     },
 }
 
-tables = [
-    "volvN.csv",
-]
-data_parser = {
-    "vols": {
-        "e_layers": 5,
-        "d_model": 512,
-        "query": "date>'#2024-02-30' and date<'#2024-04-22' "#and e2d_20==3",
-    },
-}
+# tables = [
+#     "volvN.csv",
+# ]
+# data_parser = {
+#     "vols": {
+#         "e_layers": 5,
+#         "d_model": 512,
+#         "query": "date>'#2024-02-30' and date<'#2024-04-22' "#and e2d_20==3",
+#     },
+# }
 from data.data_loader import DatasetMTS
 import pandas as pd
 
@@ -189,6 +189,24 @@ exp = Exp_crossformer(args)
 #         data_path=df,
 #     )
 # )
+cutdate='2024-04-30'
+data_parser = {
+    "vols": {
+        'e_layers':5,
+        'd_model':512,
+        "query": f"date>'#{cutdate}'",
+    },
+    }
+for i in range(args.itr):
+  setting=update_args(i)
+  DatasetMTS.clear()
+  exp = Exp_crossformer(args)
+  print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+  results = []
+  for table in tables:
+      results.append(exp.test(setting, 'vols', True, data_path=[table], inverse=True))
+#   regplot(3)
+  
 print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
 for table in tables:
     results.append(
@@ -219,7 +237,7 @@ for ii in range(args.itr):
 
     exp = Exp_crossformer(args)  # set experiments
     print(f">>>>>>>start training : {setting}>>>>>>>>>>>>>>>>>>>>>>>>>>")
-    tables = ["volvG.csv", "volvN.csv"]
+    tables = ["volvT.csv", "volvN.csv"]
     exp.train(setting, "vols")
 
     print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")

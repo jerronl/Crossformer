@@ -399,8 +399,10 @@ class Exp_crossformer(Exp_Basic):
             #     trues = np.concatenate(trues, axis=0)
             #     np.save(folder_path + "pred.npy", preds)
             #     np.save(folder_path + "true.npy", trues)
+        else:
+            metrics_mean = ()
 
-        return np.concatenate(preds), np.concatenate(trues)
+        return np.concatenate(preds), np.concatenate(trues), metrics_mean
 
     def _process_one_batch(self, dataset_object, batch_x, batch_y, inverse=False):
         batch_x = [x.float().to(self.device) for x in batch_x]

@@ -14,7 +14,7 @@ from torch.nn import DataParallel
 from data.data_loader import DatasetMTS
 from cross_exp.exp_basic import Exp_Basic
 from cross_models.cross_former import Crossformer
-from utils.tools import EarlyStopping, adjust_learning_rate, print_color
+from utils.tools import EarlyStopping, print_color
 from utils.metrics import make_metric
 
 
@@ -223,7 +223,11 @@ class Exp_crossformer(Exp_Basic):
             ) as e:
                 print_color(91, "failed to load", e, best_model_path)
         early_stopping = EarlyStopping(
-            patience=self.args.patience, verbose=True, best_score=score
+            lradj=self.args.lradj,
+            learning_rate=self.args.learning_rate,
+            patience=self.args.patience,
+            verbose=True,
+            best_score=score,
         )
         for epoch in range(spoch, self.args.train_epochs):
             time_now = time.time()
@@ -288,9 +292,7 @@ class Exp_crossformer(Exp_Basic):
                 break
 
             if early_stopping.counter > 1:
-                adjust_learning_rate(model_optim, epoch + 1 - spoch, self.args)
-            else:
-                spoch += 2
+                early_stopping.adjust_learning_rate(model_optim)
 
         best_model_path = path + "/" + "checkpoint.pth"
         checkpoint = list(torch.load(best_model_path))
@@ -421,69 +423,69 @@ class Exp_crossformer(Exp_Basic):
             batch_y = dataset_object.inverse_transform(batch_y)
         return outputs, batch_y
 
-    def eval(self, setting, save_pred=False, inverse=False):
-        # evaluate a saved model
-        args = self.args
-        data_set = Dataset_MTS(
-            root_path=args.root_path,
-            data_path=args.data_path,
-            flag="test",
-            size=[args.in_len, args.out_len],
-            data_split=args.data_split,
-            scale=True,
-            scale_statistic=args.scale_statistic,
-        )
+    # def eval(self, setting, save_pred=False, inverse=False):
+    #     # evaluate a saved model
+    #     args = self.args
+    #     data_set = Dataset_MTS(
+    #         root_path=args.root_path,
+    #         data_path=args.data_path,
+    #         flag="test",
+    #         size=[args.in_len, args.out_len],
+    #         data_split=args.data_split,
+    #         scale=True,
+    #         scale_statistic=args.scale_statistic,
+    #     )
 
-        data_loader = DataLoader(
-            data_set,
-            batch_size=args.batch_size,
-            shuffle=False,
-            num_workers=args.num_workers,
-            drop_last=False,
-        )
+    #     data_loader = DataLoader(
+    #         data_set,
+    #         batch_size=args.batch_size,
+    #         shuffle=False,
+    #         num_workers=args.num_workers,
+    #         drop_last=False,
+    #     )
 
-        self.model.eval()
+    #     self.model.eval()
 
-        preds = []
-        trues = []
-        metrics_all = []
-        instance_num = 0
-        metric = make_metric(data_set.ycat)
+    #     preds = []
+    #     trues = []
+    #     metrics_all = []
+    #     instance_num = 0
+    #     metric = make_metric(data_set.ycat)
 
-        with torch.no_grad():
-            for i, (batch_x, batch_y) in enumerate(data_loader):
-                pred, true = self._process_one_batch(
-                    data_set, batch_x, batch_y, inverse
-                )
-                batch_size = pred.shape[0]
-                instance_num += batch_size
-                batch_metric = (
-                    np.array(
-                        metric(pred.detach().cpu().numpy(), true.detach().cpu().numpy())
-                    )
-                    * batch_size
-                )
-                metrics_all.append(batch_metric)
-                if save_pred:
-                    preds.append(pred.detach().cpu().numpy())
-                    trues.append(true.detach().cpu().numpy())
+    #     with torch.no_grad():
+    #         for i, (batch_x, batch_y) in enumerate(data_loader):
+    #             pred, true = self._process_one_batch(
+    #                 data_set, batch_x, batch_y, inverse
+    #             )
+    #             batch_size = pred.shape[0]
+    #             instance_num += batch_size
+    #             batch_metric = (
+    #                 np.array(
+    #                     metric(pred.detach().cpu().numpy(), true.detach().cpu().numpy())
+    #                 )
+    #                 * batch_size
+    #             )
+    #             metrics_all.append(batch_metric)
+    #             if save_pred:
+    #                 preds.append(pred.detach().cpu().numpy())
+    #                 trues.append(true.detach().cpu().numpy())
 
-        metrics_all = np.stack(metrics_all, axis=0)
-        metrics_mean = metrics_all.sum(axis=0) / instance_num
+    #     metrics_all = np.stack(metrics_all, axis=0)
+    #     metrics_mean = metrics_all.sum(axis=0) / instance_num
 
-        # result save
-        folder_path = "./results/" + setting + "/"
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
+    #     # result save
+    #     folder_path = "./results/" + setting + "/"
+    #     if not os.path.exists(folder_path):
+    #         os.makedirs(folder_path)
 
-        mae, mse, rmse, mape, mspe = metrics_mean
-        print("mse:{:.3f}, mae:{}".format(mse, mae))
+    #     mae, mse, rmse, mape, mspe = metrics_mean
+    #     print("mse:{:.3f}, mae:{}".format(mse, mae))
 
-        np.save(folder_path + "metrics.npy", np.array([mae, mse, rmse, mape, mspe]))
-        if save_pred:
-            preds = np.concatenate(preds, axis=0)
-            trues = np.concatenate(trues, axis=0)
-            np.save(folder_path + "pred.npy", preds)
-            np.save(folder_path + "true.npy", trues)
+    #     np.save(folder_path + "metrics.npy", np.array([mae, mse, rmse, mape, mspe]))
+    #     if save_pred:
+    #         preds = np.concatenate(preds, axis=0)
+    #         trues = np.concatenate(trues, axis=0)
+    #         np.save(folder_path + "pred.npy", preds)
+    #         np.save(folder_path + "true.npy", trues)
 
-        return mae, mse, rmse, mape, mspe
+    #     return mae, mse, rmse, mape, mspe

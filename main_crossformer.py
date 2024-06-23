@@ -175,8 +175,10 @@ data_parser = {
 from data.data_loader import DatasetMTS
 import pandas as pd
 
-import seaborn as sns, numpy as np,math
+import seaborn as sns, numpy as np, math
 import matplotlib.pyplot as plt
+
+
 def regplot(cols, figsize=(16, 16)):
     global metrics
     cnt = len(dep_var) - dep_var.count("_")
@@ -225,7 +227,8 @@ def plot_metric(*args, **kwargs):
     a, b, c = metrics.shape
     _, axs = plt.subplots(
         nrows=math.ceil(c / 2),
-        ncols=2, figsize=(16, 16), 
+        ncols=2,
+        figsize=(16, 16),
     )
     for i in range(c):
         ax = (
@@ -244,6 +247,8 @@ def plot_metric(*args, **kwargs):
 
     plt.tight_layout()
     plt.show()
+
+
 results = []
 DatasetMTS.clear()
 setting = update_args(0)
@@ -258,47 +263,66 @@ exp = Exp_crossformer(args)
 #         data_path=df,
 #     )
 # )
-cutdate='2024-04-30'
-metrics_cnt=6
-itr=5
-labels=[[f'm{i}' for i in range(itr)] ,[f'h{h+1}' for h in range(5)],["mae", "mse", "rmse", "mape", "mspe", "accr"]]
-dep_var=['level0', 'slope0', 'curve0', 'level1', 'slope1', 'curve1', 'level2', 'slope2', 'curve2', 'level3', 'slope3', 'curve3']
-metrics=np.empty((0,len(labels[1]),len(labels[2])))
+cutdate = "2024-04-30"
+metrics_cnt = 6
+itr = 5
+labels = [
+    [f"m{i}" for i in range(itr)],
+    [f"h{h+1}" for h in range(5)],
+    ["mae", "mse", "rmse", "mape", "mspe", "accr"],
+]
+dep_var = [
+    "level0",
+    "slope0",
+    "curve0",
+    "level1",
+    "slope1",
+    "curve1",
+    "level2",
+    "slope2",
+    "curve2",
+    "level3",
+    "slope3",
+    "curve3",
+]
+metrics = np.empty((0, len(labels[1]), len(labels[2])))
 for i in range(itr):
-  results = []
-  for h in range(5):
-    data_parser = {
-    "vols": {
-        'e_layers':5,
-        'd_model':512,
-        'lradj':'type2',
-        "query": f"date>'#{cutdate}' and floor(horizon)=={h+1} and e2d_20==17",
-    },
-    }
-    setting=update_args(i)
-    DatasetMTS.clear()
-    exp = Exp_crossformer(args)
-    print(f">>>>>>>testing : {data_parser['vols']['query']} m{i}h{h+1}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-    results.append(exp.test(setting, 'vols', True, inverse=True))
-  regplot(3)
-  
+    results = []
+    for h in range(5):
+        data_parser = {
+            "vols": {
+                "e_layers": 5,
+                "d_model": 512,
+                "lradj": "type2",
+                "query": f"date>'#{cutdate}' and floor(horizon)=={h+1} and e2d_20==17",
+            },
+        }
+        setting = update_args(i)
+        DatasetMTS.clear()
+        exp = Exp_crossformer(args)
+        print(
+            f">>>>>>>testing : {data_parser['vols']['query']} m{i}h{h+1}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<"
+        )
+        results.append(exp.test(setting, "vols", True, inverse=True))
+    regplot(3)
+
 data_parser = {
     "vols": {
-        'e_layers':5,
-        'd_model':512,
+        "e_layers": 5,
+        "d_model": 512,
         "query": f"date>'#{cutdate}' and horizon==1",
     },
-    }
+}
 for i in range(args.itr):
-  setting=update_args(i)
-  DatasetMTS.clear()
-  exp = Exp_crossformer(args)
-  print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-  results = []
-  for table in tables:
-      results.append(exp.test(setting, 'vols', True, data_path=[table], inverse=True))
+    setting = update_args(i)
+    DatasetMTS.clear()
+    exp = Exp_crossformer(args)
+    print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+    results = []
+    for table in tables:
+        results.append(exp.test(setting, "vols", True, data_path=[table], inverse=True))
 #   regplot(3)
-  
+
 print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
 for table in tables:
     results.append(
@@ -323,6 +347,19 @@ for table in tables:
 # for i in range(2):
 #     for j in range(2):
 #         np.savetxt(f'./res{i}{j}.csv',results[i][j],delimiter=",")
+tables = [
+    "volvG.csv",
+    # "volvA.csv",
+]
+data_parser = {
+    "vols": {
+        "e_layers": 5,
+        "d_model": 512,
+        "patience": 3,
+        "train_epochs": 5,
+        "data_path": tables,
+    },
+}
 for ii in range(args.itr):
     # setting record of experiments
     setting = update_args(ii)
@@ -341,12 +378,17 @@ for ii in range(args.itr):
         preds, trues = exp.test(setting, "prcs", True, data_path=[table], inverse=True)
         print(preds.shape, trues.shape)
 
-dep_var=['pmcat','close', 'hi', 'lo',]
+dep_var = [
+    "pmcat",
+    "close",
+    "hi",
+    "lo",
+]
 for i in range(args.itr):
-  setting=update_args(i)
-  DatasetMTS.clear()
-  exp = Exp_crossformer(args)
-  print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-  results = []
-  for table in tables:
-      results.append(exp.test(setting, 'prcs', True, data_path=[table], inverse=True))
+    setting = update_args(i)
+    DatasetMTS.clear()
+    exp = Exp_crossformer(args)
+    print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+    results = []
+    for table in tables:
+        results.append(exp.test(setting, "prcs", True, data_path=[table], inverse=True))

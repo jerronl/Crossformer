@@ -175,6 +175,75 @@ data_parser = {
 from data.data_loader import DatasetMTS
 import pandas as pd
 
+import seaborn as sns, numpy as np,math
+import matplotlib.pyplot as plt
+def regplot(cols, figsize=(16, 16)):
+    global metrics
+    cnt = len(dep_var) - dep_var.count("_")
+    figs = min(cnt, cols)
+    _, axes = plt.subplots(math.ceil(cnt / figs), figs, figsize=figsize)
+    j = 0
+
+    for i, name in enumerate(dep_var):
+        if name != "_":
+            axs = axes.flat[j] if figs > 1 else axes
+            j = j + 1
+            left, right = 999, -999
+            for ii in range(len(results)):
+                preds, trues, _ = results[ii]
+                sns.regplot(
+                    ax=axs,
+                    x=trues[:, i],
+                    y=preds[:, i],
+                    scatter_kws={"color": f"C{ii}", "alpha": 0.3},
+                    line_kws={"color": f"C{ii}", "alpha": 0.3},
+                    label=labels[1][ii],
+                )
+                mask = ~np.isnan(trues[:, i])
+                if not dep_var[i][:3] in ["dtm", "pmc"]:
+                    left = min(left, max(np.min(trues[:, i][mask]), -5))
+                    right = max(right, min(np.max(trues[:, i][mask]), 5))
+                else:
+                    left = min(left, np.min(trues[:, i][mask]))
+                    right = max(right, np.max(trues[:, i][mask]))
+            axs.set_title(name)
+            axs.set_xlim(left=left, right=right)
+            axs.legend()
+    metric = []
+    for ii in range(len(results)):
+        _, _, m = results[ii]
+        metric.append(m)
+
+    metrics = np.append(
+        metrics, np.array(metric).reshape([1, len(metric), len(m)]), axis=0
+    )
+
+    plt.show()
+
+
+def plot_metric(*args, **kwargs):
+    a, b, c = metrics.shape
+    _, axs = plt.subplots(
+        nrows=math.ceil(c / 2),
+        ncols=2, figsize=(16, 16), 
+    )
+    for i in range(c):
+        ax = (
+            axs[i // 2, i % 2] if c > 1 else axs
+        )  # Handle the case when c=1 to avoid indexing errors
+        for j in range(a):
+            ax.plot(
+                metrics[j, :, i], label=labels[0][j], *args, **kwargs
+            )  # Plot each series in the i-th plot
+        ax.set_title(labels[2][i])
+        ax.legend()  # Show legend in each subplot
+
+        # Set custom x-axis labels
+        ax.set_xticks(range(b))  # Set x-tick positions for all 'b' points
+        ax.set_xticklabels(labels[1])  # Set x-tick labels
+
+    plt.tight_layout()
+    plt.show()
 results = []
 DatasetMTS.clear()
 setting = update_args(0)
@@ -190,11 +259,34 @@ exp = Exp_crossformer(args)
 #     )
 # )
 cutdate='2024-04-30'
+metrics_cnt=6
+itr=5
+labels=[[f'm{i}' for i in range(itr)] ,[f'h{h+1}' for h in range(5)],["mae", "mse", "rmse", "mape", "mspe", "accr"]]
+dep_var=['level0', 'slope0', 'curve0', 'level1', 'slope1', 'curve1', 'level2', 'slope2', 'curve2', 'level3', 'slope3', 'curve3']
+metrics=np.empty((0,len(labels[1]),len(labels[2])))
+for i in range(itr):
+  results = []
+  for h in range(5):
+    data_parser = {
+    "vols": {
+        'e_layers':5,
+        'd_model':512,
+        'lradj':'type2',
+        "query": f"date>'#{cutdate}' and floor(horizon)=={h+1} and e2d_20==17",
+    },
+    }
+    setting=update_args(i)
+    DatasetMTS.clear()
+    exp = Exp_crossformer(args)
+    print(f">>>>>>>testing : {data_parser['vols']['query']} m{i}h{h+1}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+    results.append(exp.test(setting, 'vols', True, inverse=True))
+  regplot(3)
+  
 data_parser = {
     "vols": {
         'e_layers':5,
         'd_model':512,
-        "query": f"date>'#{cutdate}'",
+        "query": f"date>'#{cutdate}' and horizon==1",
     },
     }
 for i in range(args.itr):

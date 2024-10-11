@@ -271,20 +271,20 @@ labels = [
     [f"h{h+1}" for h in range(5)],
     ["mae", "mse", "rmse", "mape", "mspe", "accr"],
 ]
-dep_var = [
-    "level0",
-    "slope0",
-    "curve0",
-    "level1",
-    "slope1",
-    "curve1",
-    "level2",
-    "slope2",
-    "curve2",
-    "level3",
-    "slope3",
-    "curve3",
-]
+# dep_var = [
+#     "level0",
+#     "slope0",
+#     "curve0",
+#     "level1",
+#     "slope1",
+#     "curve1",
+#     "level2",
+#     "slope2",
+#     "curve2",
+#     "level3",
+#     "slope3",
+#     "curve3",
+# ]
 metrics = np.empty((0, len(labels[1]), len(labels[2])))
 for i in range(itr):
     results = []
@@ -348,7 +348,7 @@ for table in tables:
 #     for j in range(2):
 #         np.savetxt(f'./res{i}{j}.csv',results[i][j],delimiter=",")
 tables = [
-    "volvG.csv",
+    "volvGOOG.csv",
     # "volvA.csv",
 ]
 data_parser = {
@@ -366,7 +366,7 @@ for ii in range(args.itr):
 
     exp = Exp_crossformer(args)  # set experiments
     print(f">>>>>>>start training : {setting}>>>>>>>>>>>>>>>>>>>>>>>>>>")
-    tables = ["volvT.csv", "volvN.csv"]
+    # tables = ["volvT.csv", "volvN.csv"]
     exp.train(setting, "vols")
 
     print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
@@ -378,12 +378,12 @@ for ii in range(args.itr):
         preds, trues = exp.test(setting, "prcs", True, data_path=[table], inverse=True)
         print(preds.shape, trues.shape)
 
-dep_var = [
-    "pmcat",
-    "close",
-    "hi",
-    "lo",
-]
+# dep_var = [
+#     "pmcat",
+#     "close",
+#     "hi",
+#     "lo",
+# ]
 for i in range(args.itr):
     setting = update_args(i)
     DatasetMTS.clear()

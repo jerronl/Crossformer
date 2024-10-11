@@ -125,12 +125,12 @@ class DatasetMTS(Dataset):
                 df = pd.read_csv(os.path.join(self.root_path, table)).replace(
                     -99999, float("nan")
                 )
-                df = df[~df["dtm0"].isna()]
+                df = df[~df[cols["dtm0"]].isna()]
                 if not cols["xvsp"] and "spot" in df.columns:
                     df.drop(columns="spot")
                 if self.query is not None or self.data_name == "prcs":
                     df["day"] = pd.to_datetime(df["date"].str.replace("#", "")).dt.date
-                    df["horizon"] = df[f"dtm0_{self.in_len}"] - df["dtm0"]
+                    df["horizon"] = df[f"dtm_0_{self.in_len}"] - df[cols["dtm0"]]
                     lasttime = df.groupby(["day"])["date"].max().values
                     df = df[(df["date"].isin(lasttime)) & (df["horizon"] > 0)]
 

@@ -1,36 +1,38 @@
-def data_columns(data):
-    return {'vols':{
-        'vs':[ 'date', 'e2d', 'dtm0', 'vol',],
-        'vm':[ f'{v}{d}' for d in range(4)
-              for v in 
-              [ 'level','slope','curve',]   ], 
-        'dtm':[f'dtm{d}' for d in range(1,4)],
-        'cat':[                             ],
-        'vpc':[ 'spot','close', 'hi', 'lo', ],
-        'date':['date',                     ],
-        'vnp':[ 'vs','dtm','vm',            ],
-        'cyc':[['e2d', 70] ,['dtm0', 5],    ],
-        'opc':[ 'close', 'hi', 'lo',        ],
-        'y' : [ 'vm',                       ],
-        'ycat':0,
-        'xvsp':True,
-    },'prcs':{
-        'vs':[ 'date', 'e2d', 'dtm0', 'vol',],
-        'vm':[ f'{v}{d}' for d in range(4)
-              for v in 
-              [ 'level','slope','curve',]   ], 
-        'dtm':[f'dtm{d}' for d in range(1,4)],
-        'cat':[ 'pmcat',                    ],
-        'vpc':[ 'spot','close', 'hi', 'lo', ],
-        'date':['date',                     ],
-        'vnp':[ 'vs','dtm','vm',            ],
-        'cyc':[['e2d', 70] ,['dtm0', 5],    ],
-        'opc':[ 'close', 'hi', 'lo',        ],
-        'y' : [ 'cat', 'opc',               ],
-        'ycat':22,
-        'xvsp':False,
+dtms = [f"dtm_{d}" for d in range(4)]
+dcs = {
+    "vols": {
+        "dtm0": dtms[0],
+        "vs": ["date", "e2d", dtms[0], "vol"],
+        "vm": [
+            f"{v}_{d}"
+            for d in range(4)
+            for v in ["c", "p", "c-10", "c-5", "c5", "c10", "p-10", "p-5", "p5", "p10"]
+        ],
+        "dtm": dtms[1:],
+        "cat": [],
+        "vpc": ["spot", "close", "hi", "lo"],
+        "date": ["date"],
+        "vnp": ["vs", "dtm", "vm"],
+        "cyc": [["e2d", 70], [dtms[0], 5]],
+        "opc": ["close", "hi", "lo"],
+        "y": ["vm"],
+        "ycat": 0,
+        "xvsp": True,
     },
-    }[data]
+    "prcs": {
+        "cat": ["pmcat"],
+        "y": ["cat", "opc"],
+        "ycat": 22,
+        "xvsp": False,
+    },
+}
+dic_procs = dcs["vols"]
+dic_procs.update(dcs["prcs"])
+dcs["prcs"] = dic_procs
+
+
+def data_columns(data):
+    return dcs[data]
 
 
 def data_names(cols, in_len):

@@ -4,7 +4,6 @@ dcs = {
     "vols": {
         "dtm0": dtms[0],
         "vs": ["date", "e2d", dtms[0], "vol"],
-        "v": [f"{v}" for v in curve],
         "vm": [f"{v}_{d}" for d in range(4) for v in curve],
         "dtm": dtms[1:],
         "cat": [],
@@ -13,7 +12,7 @@ dcs = {
         "vnp": ["vs", "dtm", "vm"],
         "cyc": [["e2d", 70], [dtms[0], 5]],
         "opc": ["close", "hi", "lo"],
-        "y": ["v"],
+        "y": ["vm"],
         "ycat": 0,
         "xvsp": True,
     },
@@ -24,7 +23,7 @@ dcs = {
         "xvsp": False,
     },
 }
-dic_procs = dcs["vols"]
+dic_procs = dcs["vols"].copy()
 dic_procs.update(dcs["prcs"])
 dcs["prcs"] = dic_procs
 

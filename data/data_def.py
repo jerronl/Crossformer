@@ -1,13 +1,11 @@
 dtms = [f"dtm_{d}" for d in range(4)]
+curve = ["c", "p", "c-10", "c-5", "c5", "c10", "p-10", "p-5", "p5", "p10"]
 dcs = {
     "vols": {
         "dtm0": dtms[0],
         "vs": ["date", "e2d", dtms[0], "vol"],
-        "vm": [
-            f"{v}_{d}"
-            for d in range(4)
-            for v in ["c", "p", "c-10", "c-5", "c5", "c10", "p-10", "p-5", "p5", "p10"]
-        ],
+        "v": [f"{v}" for v in curve],
+        "vm": [f"{v}_{d}" for d in range(4) for v in curve],
         "dtm": dtms[1:],
         "cat": [],
         "vpc": ["spot", "close", "hi", "lo"],
@@ -15,7 +13,7 @@ dcs = {
         "vnp": ["vs", "dtm", "vm"],
         "cyc": [["e2d", 70], [dtms[0], 5]],
         "opc": ["close", "hi", "lo"],
-        "y": ["vm"],
+        "y": ["v"],
         "ycat": 0,
         "xvsp": True,
     },

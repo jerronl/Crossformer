@@ -167,7 +167,7 @@ class DatasetMTS(Dataset):
             xvsp.append(
                 df_raw["spot"].values.reshape(-1, 1)
                 if cols["xvsp"]
-                else np.zeros((len(x), 1), float)
+                else np.zeros((len(df_raw), 1), float)
             )
             y.append(df_raw[vy].values)
 

@@ -1,19 +1,23 @@
-dtms = [f"dtm_{d}" for d in range(4)]
+sections = 4
+dtms = [f"dtm_{d}" for d in range(sections)]
 curve = ["c", "p", "c-10", "c-5", "c5", "c10", "p-10", "p-5", "p5", "p10"]
 dcs = {
     "vols": {
         "dtm0": dtms[0],
         "vs": ["date", "e2d", dtms[0], "vol"],
-        "vm": [f"{v}_{d}" for d in range(4) for v in curve],
+        "crv": curve,
+        "vml": [f"{v}_{d}" for d in range(sections) for v in [curve[0]]],
+        "vmsp": [f"{v}_{d}" for d in range(sections) for v in curve[1:]],
         "dtm": dtms[1:],
         "cat": [],
         "vpc": ["spot", "close", "hi", "lo"],
-        "date": ["date"],
-        "vnp": ["vs", "dtm", "vm"],
+        "vnp": ["vs", "dtm", "vml"],
+        "vsp": ["vmsp"],
         "cyc": [["e2d", 70], [dtms[0], 5]],
         "opc": ["close", "hi", "lo"],
-        "y": ["vm"],
+        "y": ["vml", "vmsp"],
         "ycat": 0,
+        "sect": sections,
         "xvsp": True,
     },
     "prcs": {
@@ -32,11 +36,23 @@ def data_columns(data):
     return dcs[data]
 
 
+def extract_cols(cols, names):
+    res = []
+    for c in names:
+        if c in cols:
+            res += extract_cols(cols, cols[c])
+        else:
+            res.append(c)
+    return res
+
+
 def data_names(cols, in_len):
-    vnp = [c for s in cols["vnp"] for c in cols[s]]  # vnp.sort()
+    vnp = extract_cols(cols, ["vnp"])
+    vsp = extract_cols(cols, ["vsp"])
     vnpt = [f"{var}_{i}" for i in range(1, in_len + 1) for var in vnp]
+    vspt = [f"{var}_{i}" for i in range(1, in_len + 1) for var in vsp]
     vpc = cols["vpc"]
     vvs = cols["vs"]
-    vy = [c for s in cols["y"] for c in cols[s]]
+    vy = extract_cols(cols, ["y"])
     vpct = [f"{var}_{i}" for i in range(1, in_len + 1) for var in vpc]
-    return vnp, vnpt, vpc, vvs, vy, vpct
+    return vy, vnp, vnpt, vpc, vvs, vpct, vsp, vspt

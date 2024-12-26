@@ -75,6 +75,8 @@ class Exp_crossformer(Exp_Basic):
             self.args.in_len,
             self.args.out_len,
             self.args.seg_len,
+            data.sect,
+            data.sp,
             self.args.win_size,
             self.args.factor,
             self.args.d_model,
@@ -357,14 +359,14 @@ class Exp_crossformer(Exp_Basic):
 
         with torch.no_grad():
             for i, (batch_x, batch_y) in enumerate(test_loader):
-                pred, true = self._process_one_batch(
-                    test_data, batch_x, batch_y, inverse
-                )
+                pred, true = self._process_one_batch(test_data, batch_x, batch_y)
                 batch_size = pred.shape[0]
                 instance_num += batch_size
                 if run_metric:
                     batch_metric = np.array(metric(pred, true)) * batch_size
                     metrics_all.append(batch_metric)
+                if inverse:
+                    pred, true = self._inverse(test_data, pred, true)
                 if save_pred:
                     preds.append(
                         pred
@@ -415,12 +417,16 @@ class Exp_crossformer(Exp_Basic):
         outputs = self.model(batch_x)
 
         if inverse:
-            if dataset_object.ycat > 0:
-                outputs[:, :, -dataset_object.ycat :] = F.softmax(
-                    outputs[:, :, -dataset_object.ycat :], 2
-                )
-            outputs = dataset_object.inverse_transform(outputs)
-            batch_y = dataset_object.inverse_transform(batch_y)
+            return self._inverse(dataset_object, outputs, batch_y)
+        return outputs, batch_y
+
+    def _inverse(self, dataset_object, outputs, batch_y):
+        if dataset_object.ycat > 0:
+            outputs[:, :, -dataset_object.ycat :] = F.softmax(
+                outputs[:, :, -dataset_object.ycat :], 2
+            )
+        outputs = dataset_object.inverse_transform(outputs)
+        batch_y = dataset_object.inverse_transform(batch_y)
         return outputs, batch_y
 
     # def eval(self, setting, save_pred=False, inverse=False):

@@ -104,13 +104,14 @@ class DatasetMTS(Dataset):
         self.__read_data__()
         self.shape = self.data[2][self.set_type][0]
         self.scaler = self.data[0]
-        self.data_dim, _, self.out_dim, self.ycat = self.data[1]
+        self.data_dim, _, self.out_dim, self.ycat, self.sect, self.sp = self.data[1]
 
     def __read_data__(self):
         if self.data_name + str(self.data_path) in self.datas:
             self.data = self.__class__.datas[self.data_name + str(self.data_path)]
             return
         cols = data_columns(self.data_name)
+        dtm0 = cols["dtm0"]
         df_raws = [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
         if isinstance(self.data_path, pd.DataFrame):
             df_raws[self.set_type] = self.data_path
@@ -125,12 +126,12 @@ class DatasetMTS(Dataset):
                 df = pd.read_csv(os.path.join(self.root_path, table)).replace(
                     -99999, float("nan")
                 )
-                df = df[~df[cols["dtm0"]].isna()]
+                df = df[~df[dtm0].isna()]
                 if not cols["xvsp"] and "spot" in df.columns:
                     df.drop(columns="spot")
                 if self.query is not None or self.data_name == "prcs":
                     df["day"] = pd.to_datetime(df["date"].str.replace("#", "")).dt.date
-                    df["horizon"] = df[f"dtm_0_{self.in_len}"] - df[cols["dtm0"]]
+                    df["horizon"] = df[f"{dtm0}_{self.in_len}"] - df[dtm0]
                     lasttime = df.groupby(["day"])["date"].max().values
                     df = df[(df["date"].isin(lasttime)) & (df["horizon"] > 0)]
 
@@ -154,40 +155,47 @@ class DatasetMTS(Dataset):
                     )
                 i = 0 if ds[1] else self.set_type
                 df_raws[i] = pd.concat([df_raws[i], df.iloc[ds[-1] :]])
-        vnp, vnpt, vpc, vvs, vy, vpct = data_names(cols, self.in_len)
-        xnp, xpc, xvsp, xvs, y, cyclics = [], [], [], [], [], []
+        vy, vnp, vnpt, vpc, vvs, vpct, vsp, vspt = data_names(cols, self.in_len)
+        xnp, xpc, xvsp, xvs, y, cyclics, xsp = [[] for _ in range(7)]
         for i, df_raw in enumerate(df_raws):
             if len(df_raw.columns) < 1:
                 df_raw = pd.DataFrame(columns=df_raws[self.set_type].columns)
                 df_raws[i] = df_raw
             xnp.append(df_raw[vnpt].values.astype(float).reshape((-1, len(vnp))))
+            xsp.append(df_raw[vspt].values.astype(float).reshape((-1, len(vsp))))
             xpc.append(df_raw[vpct].values.reshape((-1, 1)))
+            xvsp.append(
+                df_raw["spot"].values.reshape(-1, 1)
+                if cols["xvsp"]
+                else np.zeros((len(x), 1), float)
+            )
             y.append(df_raw[vy].values)
+
             assert (
                 len(xnp[-1]) < 1
                 or np.isnan(xnp[-1]).sum() == 0
                 and np.isnan(xpc[-1]).sum() == 0
             )
         if self.scaler is None:
-            scaler_np, scaler_p, scaler_y = (
-                StandardScaler(),
-                StandardScaler(),
-                StandardScaler(),
-            )
+            scaler_np, scaler_p, scaler_y, scaler_sp, scaler_vsp = [
+                StandardScaler() for _ in range(5)
+            ]
             scaler_np.fit(xnp[0])
+            scaler_sp.fit(xsp[0].reshape((-1, 1)))
             scaler_p.fit(xpc[0])
             scaler_y.fit(y[0])
+            scaler_vsp.fit(xvsp[0])
         else:
-            scaler_np, scaler_p, scaler_y = self.scaler
+            scaler_np, scaler_p, scaler_y, scaler_sp, scaler_vsp = self.scaler
         ivs = [vnp.index(v) for v in vvs]
-        idat = [vnp.index(v) for v in cols["date"]]
-        idatv = [vvs.index(v) for v in cols["date"]]
+        idat = [vnp.index(v) for v in ["date"]]
+        idatv = [vvs.index(v) for v in ["date"]]
         icyc = [[vnp.index(v) for v, c in cols["cyc"]], [c for v, c in cols["cyc"]]]
         for i, df_raw in enumerate(df_raws):
             if len(xnp[i]) < 1:
                 cyclics.append([])
                 xvs.append([])
-                xvsp.append([])
+                # xvsp.append([])
             else:
                 c = np.concatenate(
                     cyclic_t(xnp[i][:, idat])
@@ -205,6 +213,9 @@ class DatasetMTS(Dataset):
                     )
                 )
                 xnp[i] = xx[:, :, len(ivs) :]
+                xsp[i] = scaler_sp.transform(xsp[i].reshape((-1, 1))).reshape(
+                    (-1, self.in_len, len(vsp))
+                )
                 xpc[i] = scaler_p.transform(xpc[i]).reshape((-1, self.in_len, len(vpc)))
                 x = df_raw[vvs].values
                 c = np.concatenate(
@@ -212,49 +223,37 @@ class DatasetMTS(Dataset):
                     axis=1,
                 )
                 x = (x - scaler_np.mean_[ivs]) / scaler_np.scale_[ivs]
-                xvs.append(
-                    np.concatenate(
-                        [
-                            x,
-                            c,
-                        ],
-                        axis=1,
-                    )
-                )
-                xvsp.append(
-                    scaler_p.transform(df_raw["spot"].values.reshape(-1, 1))
-                    if cols["xvsp"]
-                    else np.zeros((len(x), 1), float)
-                )
+                xvs.append(np.concatenate([x, c], axis=1))
+                xvsp[i] = scaler_vsp.transform(xvsp[i])
                 y[i] = (
                     scaler_y.transform(y[i]).reshape(-1, 1, y[i].shape[1]),
                     y[i][:, 0] - 1,
                 )
                 assert (
                     np.isnan(xnp[i]).sum() == 0
+                    and np.isnan(xsp[i]).sum() == 0
                     and np.isnan(xpc[i]).sum() == 0
                     and np.isnan(cyclics[-1]).sum() == 0
                     and np.isnan(xvs[-1]).sum() == 0
                     and np.isnan(xvsp[-1]).sum() == 0
                 )
         self.data = [
-            (
-                scaler_np,
-                scaler_p,
-                scaler_y,
-            ),
+            (scaler_np, scaler_p, scaler_y, scaler_sp, scaler_vsp),
             (
                 xnp[self.set_type].shape[2]
-                + cyclics[self.set_type].shape[2]
-                + xpc[self.set_type].shape[2],
+                # + xsp[self.set_type].shape[2]
+                + cyclics[self.set_type].shape[2] + xpc[self.set_type].shape[2],
                 xvs[self.set_type].shape[1] + xvsp[self.set_type].shape[1],
                 cols["ycat"] + len(vy),
                 cols["ycat"],
+                cols["sect"],
+                len(vsp) // cols["sect"],
             ),
             list(
                 zip(
                     [x.shape for x in xnp],
                     xnp,
+                    xsp,
                     cyclics,
                     xpc,
                     xvs,
@@ -269,6 +268,7 @@ class DatasetMTS(Dataset):
         (
             _,
             xnp,
+            xsp,
             cyclic,
             xpc,
             xvs,
@@ -278,7 +278,14 @@ class DatasetMTS(Dataset):
             2
         ][self.set_type]
 
-        seq_x = xnp[index], cyclic[index], xpc[index], xvs[index], xvsp[index]
+        seq_x = (
+            xnp[index],
+            xsp[index],
+            cyclic[index],
+            xpc[index],
+            xvs[index],
+            xvsp[index],
+        )
         seq_y = y[0][index], y[1][index]
 
         return seq_x, seq_y

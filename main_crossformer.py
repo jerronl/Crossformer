@@ -252,6 +252,42 @@ def plot_metric(*args, **kwargs):
 results = []
 DatasetMTS.clear()
 setting = update_args(0)
+
+tables = [
+    "volvAAPL.csv",
+    # "volvA.csv",
+]
+data_parser = {
+    "vols": {
+        "e_layers": 5,
+        "d_model": 512,
+        "patience": 3,
+        "train_epochs": 5,
+        "data_path": tables,
+    },
+}
+for ii in range(args.itr):
+    # setting record of experiments
+    setting = update_args(ii)
+
+    exp = Exp_crossformer(args)  # set experiments
+    print(f">>>>>>>start training : {setting}>>>>>>>>>>>>>>>>>>>>>>>>>>")
+    # tables = ["volvT.csv", "volvN.csv"]
+    exp.train(setting, "vols")
+
+    print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+    preds, trues, _ = exp.test(
+        setting, "vols", True, data_path=[tables[0]], inverse=True
+    )
+    print(preds.shape, trues.shape)
+
+    exp.train(setting, "prcs")
+    for table in tables:
+        preds, trues, _ = exp.test(
+            setting, "prcs", True, data_path=[table], inverse=True
+        )
+        print(preds.shape, trues.shape)
+
 exp = Exp_crossformer(args)
 # df=pd.read_csv(r'E:\mydoc\git\trade/input.csv')
 # results.append(
@@ -347,36 +383,6 @@ for table in tables:
 # for i in range(2):
 #     for j in range(2):
 #         np.savetxt(f'./res{i}{j}.csv',results[i][j],delimiter=",")
-tables = [
-    "volvGOOG.csv",
-    # "volvA.csv",
-]
-data_parser = {
-    "vols": {
-        "e_layers": 5,
-        "d_model": 512,
-        "patience": 3,
-        "train_epochs": 5,
-        "data_path": tables,
-    },
-}
-for ii in range(args.itr):
-    # setting record of experiments
-    setting = update_args(ii)
-
-    exp = Exp_crossformer(args)  # set experiments
-    print(f">>>>>>>start training : {setting}>>>>>>>>>>>>>>>>>>>>>>>>>>")
-    # tables = ["volvT.csv", "volvN.csv"]
-    exp.train(setting, "vols")
-
-    print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-    preds, trues = exp.test(setting, "vols", True, data_path=[tables[0]], inverse=True)
-    print(preds.shape, trues.shape)
-
-    exp.train(setting, "prcs")
-    for table in tables:
-        preds, trues = exp.test(setting, "prcs", True, data_path=[table], inverse=True)
-        print(preds.shape, trues.shape)
 
 # dep_var = [
 #     "pmcat",

@@ -262,7 +262,7 @@ data_parser = {
         "e_layers": 5,
         "d_model": 512,
         "patience": 3,
-        "train_epochs": 5,
+        "train_epochs": 100,
         "data_path": tables,
     },
 }

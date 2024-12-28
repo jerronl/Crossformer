@@ -130,19 +130,40 @@ class Exp_crossformer(Exp_Basic):
         return model_optim
 
     def _select_criterion(self, ycat):
-        mse, cel = nn.MSELoss(), nn.CrossEntropyLoss()
+        cel = nn.CrossEntropyLoss()
 
         def cross_entropy_mse_loss_with_nans(input, target):
             assert input.shape[1] == 1
-            tv, tc = target
+            _, tc = target
             iv, ic = input[:, :, :-ycat], input[:, 0, -ycat:]
-            mi = isnan(iv)
-            mask = isnan(tv) | mi
             mc = isnan(ic).any(dim=1)
+
+            # Base loss (exact match)
+            exact_match_loss = cel(ic[~mc], tc[~mc])
+
+            # Mask for categories that can contribute to adjacent matches
+            not_first_category = tc[~mc] > 0
+            not_last_category = tc[~mc] < ic.size(1) - 1
+
+            # Adjusted targets for adjacent class matches
+            adjacent_plus1 = torch.clamp(tc[~mc] + 1, 0, ic.size(1) - 1)
+            adjacent_minus1 = torch.clamp(tc[~mc] - 1, 0, ic.size(1) - 1)
+
+            # Partial match loss for adjacent classes, excluding edge cases
+            plus1_loss = (
+                cel(ic[~mc][not_last_category], adjacent_plus1[not_last_category]) / 4
+            )
+            minus1_loss = (
+                cel(ic[~mc][not_first_category], adjacent_minus1[not_first_category])
+                / 4
+            )
+
+            # Combine losses
+            total_loss = exact_match_loss + plus1_loss + minus1_loss
             return (
-                (mse(iv[~mask], tv[~mask]) ** 0.5) * 10
-                + cel(ic[~mc], tc[~mc])
-                + (mi.sum() + mc.sum()) / target[0].numel()
+                total_loss
+                + cross_mse_loss_with_nans(iv, target)
+                + mc.sum() / target[0].numel()
             )
 
         def cross_mse_loss_with_nans(input, target):
@@ -151,7 +172,20 @@ class Exp_crossformer(Exp_Basic):
             iv = input
             mi = isnan(iv)
             mask = isnan(tv) | mi
-            return (mse(iv[~mask], tv[~mask]) ** 0.5) * 10 + mi.sum() / target[
+            valid_iv = iv[~mask]
+            valid_tv = tv[~mask]
+
+            # Compute MSE
+            mse_loss = (valid_iv - valid_tv).pow(2).mean()
+
+            # Compute variance of predictions and targets
+            variance_tv = ((valid_tv - valid_tv.mean()).pow(2)).mean()
+            variance_iv = ((valid_iv - valid_iv.mean()).pow(2)).mean()
+
+            # Variance loss (maximize variance matching)
+            variance_loss = (variance_iv - variance_tv).pow(2)
+
+            return ((mse_loss + 0.1 * variance_loss) ** 0.5) * 10 + mi.sum() / target[
                 0
             ].numel()
 

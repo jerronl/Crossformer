@@ -129,7 +129,7 @@ class Exp_crossformer(Exp_Basic):
         model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
         return model_optim
 
-    def _select_criterion(self, ycat):
+    def _select_criterion(self, ycat,weight):
         cel = nn.CrossEntropyLoss()
 
         def cross_entropy_mse_loss_with_nans(input, target):
@@ -185,7 +185,7 @@ class Exp_crossformer(Exp_Basic):
             # Variance loss (maximize variance matching)
             variance_loss = (variance_iv - variance_tv).pow(2)
 
-            return ((mse_loss + 0.01 * variance_loss) ** 0.5) * 10 + mi.sum() / target[
+            return ((mse_loss + weight * variance_loss) ** 0.5) * 10 + mi.sum() / target[
                 0
             ].numel()
 
@@ -238,7 +238,7 @@ class Exp_crossformer(Exp_Basic):
         train_steps = len(train_loader)
 
         model_optim = self._select_optimizer()
-        criterion = self._select_criterion(self.ycat)
+        criterion = self._select_criterion(self.ycat,self.args.weight)
         score = None
         spoch = 0
         if checkpoint is not None:

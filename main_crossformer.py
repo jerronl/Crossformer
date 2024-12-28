@@ -29,6 +29,7 @@ from utils.tools import string_split
 parser = argparse.ArgumentParser(description="CrossFormer")
 
 parser.add_argument("--data", type=str, default="vols", help="data")
+parser.add_argument("--weight", type=str, default=0.005, help="data")
 parser.add_argument(
     "--root_path", type=str, default=mydrive, help="root path of the data file"
 )
@@ -133,7 +134,8 @@ def update_args(itr):
 
     print("Args in experiment:")
     print(args)
-    setting = "Crossformer_il{}_ol{}_sl{}_win{}_fa{}_dm{}_nh{}_el{}_itr{}".format(
+    setting = "Crossformer_itr{}_il{}_ol{}_sl{}_win{}_fa{}_dm{}_nh{}_el{}_wt{}".format(
+        itr,
         args.in_len,
         args.out_len,
         args.seg_len,
@@ -142,7 +144,7 @@ def update_args(itr):
         args.d_model,
         args.n_heads,
         args.e_layers,
-        itr,
+        args.weight
     )
     return setting
 

@@ -185,7 +185,7 @@ class Exp_crossformer(Exp_Basic):
             # Variance loss (maximize variance matching)
             variance_loss = (variance_iv - variance_tv).pow(2)
 
-            return ((mse_loss + 0.1 * variance_loss) ** 0.5) * 10 + mi.sum() / target[
+            return ((mse_loss + 0.01 * variance_loss) ** 0.5) * 10 + mi.sum() / target[
                 0
             ].numel()
 

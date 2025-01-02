@@ -327,8 +327,12 @@ class Exp_crossformer(Exp_Basic):
                 print_color(95, "Early stopping")
                 break
 
-            if early_stopping.counter > 1:
-                early_stopping.adjust_learning_rate(model_optim)
+            if early_stopping.counter > 1 and early_stopping.adjust_learning_rate(model_optim):
+                best_model_path = path + "/" + "checkpoint.pth"
+                checkpoint = list(torch.load(best_model_path))
+                self.model.load_state_dict(checkpoint[0][0])
+                model_optim.load_state_dict(checkpoint[0][1])
+                
 
         best_model_path = path + "/" + "checkpoint.pth"
         checkpoint = list(torch.load(best_model_path))

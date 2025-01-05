@@ -164,12 +164,15 @@ class DatasetMTS(Dataset):
             xnp.append(df_raw[vnpt].values.astype(float).reshape((-1, len(vnp))))
             xsp.append(df_raw[vspt].values.astype(float).reshape((-1, len(vsp))))
             xpc.append(df_raw[vpct].values.reshape((-1, 1)))
-            xvsp.append(
-                df_raw["spot"].values.reshape(-1, 1)
-                if cols["xvsp"]
-                else np.zeros((len(df_raw), 1), float)
-            )
-            y.append(df_raw[vy].values)
+            _y=df_raw[vy].values
+            if cols["xvsp"]:
+                xvsp.append(df_raw["spot"].values.reshape(-1, 1))
+                y.append([_y,0] )
+            else:
+                xvsp.append(np.zeros((len(df_raw), 1), float))
+                y0=_y[:,0]-1
+                _y[:,0]=abs(_y[:,0]-11.5)
+                y.append([_y,y0] )
 
             assert (
                 len(xnp[-1]) < 1
@@ -183,7 +186,7 @@ class DatasetMTS(Dataset):
             scaler_np.fit(xnp[0])
             scaler_sp.fit(xsp[0].reshape((-1, 1)))
             scaler_p.fit(xpc[0])
-            scaler_y.fit(y[0])
+            scaler_y.fit(y[0][0])
             scaler_vsp.fit(xvsp[0])
         else:
             scaler_np, scaler_p, scaler_y, scaler_sp, scaler_vsp = self.scaler
@@ -225,10 +228,7 @@ class DatasetMTS(Dataset):
                 x = (x - scaler_np.mean_[ivs]) / scaler_np.scale_[ivs]
                 xvs.append(np.concatenate([x, c], axis=1))
                 xvsp[i] = scaler_vsp.transform(xvsp[i])
-                y[i] = (
-                    scaler_y.transform(y[i]).reshape(-1, 1, y[i].shape[1]),
-                    y[i][:, 0] - 1,
-                )
+                y[i][0] = scaler_y.transform(y[i][0]).reshape(-1, 1, y[i][0].shape[1])
                 assert (
                     np.isnan(xnp[i]).sum() == 0
                     and np.isnan(xsp[i]).sum() == 0
@@ -286,7 +286,7 @@ class DatasetMTS(Dataset):
             xvs[index],
             xvsp[index],
         )
-        seq_y = y[0][index], y[1][index]
+        seq_y = y[0][index], y[1][index] if isinstance(y[1],np.ndarray) else 0
 
         return seq_x, seq_y
 

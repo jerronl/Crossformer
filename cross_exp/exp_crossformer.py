@@ -129,37 +129,33 @@ class Exp_crossformer(Exp_Basic):
         model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
         return model_optim
 
-    def _select_criterion(self, ycat,weight):
-        cel = nn.CrossEntropyLoss()
+    def _select_criterion(self, ycat, weight):
+        # cel = nn.CrossEntropyLoss()
 
         def cross_entropy_mse_loss_with_nans(input, target):
             assert input.shape[1] == 1
             _, tc = target
             iv, ic = input[:, :, :-ycat], input[:, 0, -ycat:]
             mc = isnan(ic).any(dim=1)
+            adjacents = [
+                torch.clamp(tc[~mc] + i, 0, ic.size(1) - 1) for i in [1, -1]
+            ] + [
+                torch.clamp(ic.size(1) - tc[~mc] + i, 0, ic.size(1) - 1)
+                for i in [0, -1, -2]
+            ]
+            log_probs_valid = F.log_softmax(ic[~mc], dim=-1)  # Shape: (batch_size, num_classes)
+            tc_valid = tc[~mc]  # Shape: (valid_batch_size,)
 
-            # Base loss (exact match)
-            exact_match_loss = cel(ic[~mc], tc[~mc])
+            # Exact match loss
+            exact_match_loss = -log_probs_valid[torch.arange(log_probs_valid.size(0)), tc_valid].mean()
 
-            # Mask for categories that can contribute to adjacent matches
-            not_first_category = tc[~mc] > 0
-            not_last_category = tc[~mc] < ic.size(1) - 1
-
-            # Adjusted targets for adjacent class matches
-            adjacent_plus1 = torch.clamp(tc[~mc] + 1, 0, ic.size(1) - 1)
-            adjacent_minus1 = torch.clamp(tc[~mc] - 1, 0, ic.size(1) - 1)
-
-            # Partial match loss for adjacent classes, excluding edge cases
-            plus1_loss = (
-                cel(ic[~mc][not_last_category], adjacent_plus1[not_last_category]) / 4
-            )
-            minus1_loss = (
-                cel(ic[~mc][not_first_category], adjacent_minus1[not_first_category])
-                / 4
-            )
-
+            # Compute adjacent losses
+            adjacent_losses = [
+                -log_probs_valid[torch.arange(log_probs_valid.size(0)), adjacent].mean()
+                for adjacent in adjacents
+            ]
             # Combine losses
-            total_loss = exact_match_loss + plus1_loss + minus1_loss
+            total_loss = exact_match_loss + sum(adjacent_losses) / 2./ len(adjacent_losses)
             return (
                 total_loss
                 + cross_mse_loss_with_nans(iv, target)
@@ -183,11 +179,13 @@ class Exp_crossformer(Exp_Basic):
             variance_iv = ((valid_iv - valid_iv.mean()).pow(2)).mean()
 
             # Variance loss (maximize variance matching)
-            variance_loss = (variance_iv - variance_tv).pow(2)+(variance_tv/(1e-8+ variance_iv)-1).pow(2)*.01
+            variance_loss = (variance_iv - variance_tv).pow(2) + (
+                variance_tv / (1e-8 + variance_iv) - 1
+            ).pow(2) * 0.01
 
-            return ((mse_loss + weight * variance_loss) ** 0.5) * 10 + mi.sum() / target[
-                0
-            ].numel()
+            return (
+                (mse_loss + weight * variance_loss) ** 0.5
+            ) * 10 + mi.sum() / target[0].numel()
 
         return (
             cross_entropy_mse_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans
@@ -238,7 +236,7 @@ class Exp_crossformer(Exp_Basic):
         train_steps = len(train_loader)
 
         model_optim = self._select_optimizer()
-        criterion = self._select_criterion(self.ycat,self.args.weight)
+        criterion = self._select_criterion(self.ycat, self.args.weight)
         score = None
         spoch = 0
         if checkpoint is not None:
@@ -327,12 +325,13 @@ class Exp_crossformer(Exp_Basic):
                 print_color(95, "Early stopping")
                 break
 
-            if early_stopping.counter > 1 and early_stopping.adjust_learning_rate(model_optim):
+            if early_stopping.counter > 1 and early_stopping.adjust_learning_rate(
+                model_optim
+            ):
                 best_model_path = path + "/" + "checkpoint.pth"
                 checkpoint = list(torch.load(best_model_path))
                 self.model.load_state_dict(checkpoint[0][0])
                 model_optim.load_state_dict(checkpoint[0][1])
-                
 
         best_model_path = path + "/" + "checkpoint.pth"
         checkpoint = list(torch.load(best_model_path))

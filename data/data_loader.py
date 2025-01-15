@@ -170,9 +170,8 @@ class DatasetMTS(Dataset):
                 y.append([_y,0] )
             else:
                 xvsp.append(np.zeros((len(df_raw), 1), float))
-                y0=_y[:,0]-1
-                _y[:,0]=abs(_y[:,0]-11.5)
-                y.append([_y,y0] )
+                _y=np.column_stack((_y, abs(_y[:,0]-cols['ycat']/2.)))
+                y.append([_y,_y[:,0]-1] )
 
             assert (
                 len(xnp[-1]) < 1

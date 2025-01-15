@@ -141,13 +141,19 @@ class Exp_crossformer(Exp_Basic):
                 torch.clamp(tc[~mc] + i, 0, ic.size(1) - 1) for i in [1, -1]
             ] + [
                 torch.clamp(ic.size(1) - tc[~mc] + i, 0, ic.size(1) - 1)
-                for i in [0, -1, -2]
+                for i in [
+                    -1,
+                ]  # -1, -2]
             ]
-            log_probs_valid = F.log_softmax(ic[~mc], dim=-1)  # Shape: (batch_size, num_classes)
+            log_probs_valid = F.log_softmax(
+                ic[~mc], dim=-1
+            )  # Shape: (batch_size, num_classes)
             tc_valid = tc[~mc]  # Shape: (valid_batch_size,)
 
             # Exact match loss
-            exact_match_loss = -log_probs_valid[torch.arange(log_probs_valid.size(0)), tc_valid].mean()
+            exact_match_loss = -log_probs_valid[
+                torch.arange(log_probs_valid.size(0)), tc_valid
+            ].mean()
 
             # Compute adjacent losses
             adjacent_losses = [
@@ -155,7 +161,9 @@ class Exp_crossformer(Exp_Basic):
                 for adjacent in adjacents
             ]
             # Combine losses
-            total_loss = exact_match_loss + sum(adjacent_losses) / 2./ len(adjacent_losses)
+            total_loss = exact_match_loss + sum(adjacent_losses) / 4.0 / len(
+                adjacent_losses
+            )
             return (
                 total_loss
                 + cross_mse_loss_with_nans(iv, target)

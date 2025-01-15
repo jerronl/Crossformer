@@ -243,7 +243,7 @@ class DatasetMTS(Dataset):
                 # + xsp[self.set_type].shape[2]
                 + cyclics[self.set_type].shape[2] + xpc[self.set_type].shape[2],
                 xvs[self.set_type].shape[1] + xvsp[self.set_type].shape[1],
-                cols["ycat"] + len(vy),
+                cols["ycat"] + y[2][0].shape[2],
                 cols["ycat"],
                 cols["sect"],
                 len(vsp) // cols["sect"],

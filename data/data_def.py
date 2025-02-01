@@ -31,6 +31,9 @@ dic_procs = dcs["vols"].copy()
 dic_procs.update(dcs["prcs"])
 dcs["prcs"] = dic_procs
 
+def set_cat(cat):
+    dcs["prcs"]["ycat"]=cat
+    
 
 def data_columns(data):
     return dcs[data]

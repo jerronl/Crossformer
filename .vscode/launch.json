@@ -20,6 +20,16 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "cwd": "${fileDirname}",
+            "env": {"PYTHONPATH": "d:/ProgramData/miniconda3/envs/e1/bin/python/"}
+        }, 
+        {
+            "name": "Python Debugger: current s1",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "cwd": "${fileDirname}",
             "env": {"PYTHONPATH": "d:/ProgramData/miniconda3/envs/s1/bin/python/"}
         }        
     ]

@@ -220,7 +220,7 @@ class Exp_crossformer(Exp_Basic):
         if self.args.resume:
             best_model_path = path + "/" + "checkpoint.pth"
             try:
-                checkpoint = torch.load(best_model_path)
+                checkpoint = torch.load(best_model_path,weights_only=False)
                 if len(checkpoint) > 1:
                     data_split = checkpoint[0][4]
             except (
@@ -337,12 +337,12 @@ class Exp_crossformer(Exp_Basic):
                 model_optim
             ):
                 best_model_path = path + "/" + "checkpoint.pth"
-                checkpoint = list(torch.load(best_model_path))
+                checkpoint = list(torch.load(best_model_path,weights_only=False))
                 self.model.load_state_dict(checkpoint[0][0])
                 model_optim.load_state_dict(checkpoint[0][1])
 
         best_model_path = path + "/" + "checkpoint.pth"
-        checkpoint = list(torch.load(best_model_path))
+        checkpoint = list(torch.load(best_model_path,weights_only=False))
         self.model.load_state_dict(checkpoint[0][0])
         checkpoint[0] = list(checkpoint[0])
         checkpoint[0][0] = (
@@ -374,7 +374,7 @@ class Exp_crossformer(Exp_Basic):
                 os.path.join(self.args.checkpoints, key) + "/crossformer.pkl"
             )
             try:
-                self.checkpoint[key] = torch.load(best_model_path)
+                self.checkpoint[key] = torch.load(best_model_path,weights_only=False)
                 print_color(94, "suc to load", best_model_path)
             except (
                 FileNotFoundError,

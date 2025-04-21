@@ -144,7 +144,7 @@ def update_args(itr):
         args.d_model,
         args.n_heads,
         args.e_layers,
-        args.weight
+        args.weight,
     )
     return setting
 
@@ -266,26 +266,26 @@ data_parser = {
         "patience": 3,
         "train_epochs": 100,
         "data_path": tables,
-        "weight":0.01
+        "weight": 0.01,
     },
 }
 results = []
-i=0
-for h in range(5):
-    data_parser = {
-    "vols": {
-        'e_layers':5,
-        'd_model':512,
-        'lradj':'type2',
-        "query": f"date>'#{cutdate}' and floor(horizon)=={h+1}",
-        "weight":0.01
-    },
-    }
-    setting=update_args(i)
-    DatasetMTS.clear()
-    exp = Exp_crossformer(args)
-    print(f">>>>>>>testing : {data_parser['vols']['query']} m{i}h{h+1}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-    results.append(exp.test(setting, 'vols', True, inverse=True))
+# i=0
+# for h in range(5):
+#     data_parser = {
+#     "vols": {
+#         'e_layers':5,
+#         'd_model':512,
+#         'lradj':'type2',
+#         "query": f"date>'#{cutdate}' and floor(horizon)=={h+1}",
+#         "weight":0.01
+#     },
+#     }
+#     setting=update_args(i)
+#     DatasetMTS.clear()
+#     exp = Exp_crossformer(args)
+#     print(f">>>>>>>testing : {data_parser['vols']['query']} m{i}h{h+1}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+#     results.append(exp.test(setting, 'vols', True, inverse=True))
 
 for ii in range(args.itr):
     # setting record of experiments

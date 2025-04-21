@@ -1,10 +1,16 @@
-import torch
+import torch, math
 import torch.nn as nn
 from einops import rearrange
 
 
 def dsw(seg_len, linear, x, x2=None):
     batch, ts_len, ts_dim = x.shape
+    pad_len = (-ts_len) % seg_len
+    if pad_len:
+        pad = x[:, -1:, :].expand(batch, pad_len, ts_dim)
+        x = torch.cat([x, pad], dim=1)
+        ts_len = ts_len + pad_len
+    # seg_num = ts_len // seg_len
     x_segment = rearrange(
         x, "b (seg_num seg_len) d -> (b d seg_num) seg_len", seg_len=seg_len
     )
@@ -15,9 +21,29 @@ def dsw(seg_len, linear, x, x2=None):
         ).reshape(-1, 1)
         x_segment = torch.cat((x_segment, x2_segment), axis=1)
     x_embed = linear(x_segment)
-    return rearrange(
+    x_embed = rearrange(
         x_embed, "(b d seg_num) d_model -> b d seg_num d_model", b=batch, d=ts_dim
     )
+    return x_embed[:, : (ts_len - pad_len), :]
+
+
+class MultiDSWEmbedding(nn.Module):
+    def __init__(self, seg_lens, d_model, ycat, sect, sp):
+        super().__init__()
+        if not isinstance(seg_lens, list):
+            seg_lens = [3, 11, 7, 5]
+
+        self.embs = nn.ModuleList(
+            [DSW_embedding(sl, d_model, ycat, sect, sp) for sl in seg_lens]
+        )
+        self.project = nn.LazyLinear(out_features=seg_lens[-1])
+
+    def forward(self, x):
+        embs = [emb(x) for emb in self.embs]
+        return rearrange(
+            self.project(rearrange(torch.cat(embs, dim=-2), "b t s d -> b t d s")),
+            "b t d s -> b t s d",
+        )
 
 
 class DSW_embedding(nn.Module):

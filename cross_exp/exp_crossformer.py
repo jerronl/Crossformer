@@ -178,7 +178,7 @@ class Exp_crossformer(Exp_Basic):
             weights = F.softmax(self.loss_logits, dim=0)
             entropy_reg = (weights * torch.log(weights + 1e-8)).sum()
             weights = weights + torch.std(weights) / len(weights)
-            weights = weights / weights.sum()
+            weights = weights / weights.sum() * 0.1
 
             # loss_huber = F.smooth_l1_loss(valid_mu, valid_tv, beta=delta)
             u = valid_mu - valid_tv
@@ -208,8 +208,8 @@ class Exp_crossformer(Exp_Basic):
             ).pow(2) * 0.01
             return (
                 weights[2] * loss_huber
-                + weights[1] * loss_mu_part
-                + weights[0] * variance_loss
+                + (weights[1] + 0.5) * loss_mu_part
+                + (weights[0] + 0.4) * variance_loss
                 + weights[1] * loss_q90_part
             ) ** 0.5 + weights[3] * entropy_reg
 

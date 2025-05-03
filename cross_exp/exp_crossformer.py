@@ -17,48 +17,7 @@ from cross_models.cross_former import Crossformer
 from utils.tools import EarlyStopping, print_color
 from utils.metrics import make_metric
 
-
 warnings.filterwarnings("ignore")
-
-# class MSLELoss(nn.Module):
-#     def __init__(self):
-#         super(MSLELoss, self).__init__()
-
-#     def forward(self, predicted, actual):
-#         # Adding a small number to ensure the log function receives values > 0
-#         return torch.mean((torch.log(predicted + 1) - torch.log(actual + 1)) ** 2)
-
-# class MSLELoss(nn.Module):
-#     def __init__(self):
-#         super(MSLELoss, self).__init__()
-
-#     def forward(self, predicted, actual):
-#         mse, cel = nn.MSELoss(), nn.CrossEntropyLoss()
-
-#         def cross_entropy_mse_loss_with_nans(input, target):
-#             assert input.shape[1] == 1
-#             tv, tc = target
-#             iv, ic = input[:, :, :-ycat], input[:, 0, -ycat:]
-#             mi = isnan(iv)
-#             mask = isnan(tv) | mi
-#             mc = isnan(ic).any(dim=1)
-#             return (
-#                 (mse(iv[~mask], tv[~mask]) ** 0.5) * 10
-#                 + cel(ic[~mc], tc[~mc])
-#                 + (mi.sum() + mc.sum()) / target[0].numel()
-#             )
-
-#         def cross_mse_loss_with_nans(input, target):
-#             assert input.shape[1] == 1
-#             tv, _ = target
-#             iv = input
-#             mi = isnan(iv)
-#             mask = isnan(tv) | mi
-#             return (mse(iv[~mask], tv[~mask]) ** 0.5) * 10 + mi.sum() / target[
-#                 0
-#             ].numel()
-
-#         return torch.mean((torch.log(predicted + 1) - torch.log(actual + 1)) ** 2)
 
 
 class Exp_crossformer(Exp_Basic):
@@ -66,6 +25,12 @@ class Exp_crossformer(Exp_Basic):
         super(Exp_crossformer, self).__init__(args)
         self.ycat = self.model = None
         self.checkpoint = {}
+        self.log_var_wt = nn.Parameter(torch.log(torch.tensor(args.weight)))
+        self.log_sigma_mu = nn.Parameter(torch.zeros(()))
+        self.log_sigma_q90 = nn.Parameter(torch.zeros(()))
+        self.log_delta = nn.Parameter(torch.log(torch.tensor(args.delta)))
+        self.log_lambda_mse = nn.Parameter(torch.log(torch.tensor(args.lambda_mse)))
+        self.log_lambda_huber = nn.Parameter(torch.log(torch.tensor(args.lambda_huber)))
 
     def build_model(self, data):
         model = Crossformer(
@@ -130,13 +95,13 @@ class Exp_crossformer(Exp_Basic):
         model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
         return model_optim
 
-    def _select_criterion(self, ycat, weight):
-        # cel = nn.CrossEntropyLoss()
+    def _select_criterion(self, ycat):
+        tau = 0.9
 
         def cross_entropy_mse_loss_with_nans(input, target):
-            assert input.shape[1] == 1
+            assert input[0].shape[1] == 1
             _, tc = target
-            iv, ic = input[:, :, :-ycat], input[:, 0, -ycat:]
+            iv, ic = (input[0][:, :, :-ycat],input[1][:, :, :-ycat]), input[0][:, 0, -ycat:]
             mc = isnan(ic).any(dim=1)
             adjacents = [
                 torch.clamp(tc[~mc] + i, 0, ic.size(1) - 1) for i in [1, -1]
@@ -172,20 +137,57 @@ class Exp_crossformer(Exp_Basic):
             )
 
         def cross_mse_loss_with_nans(input, target):
-            assert input.shape[1] == 1
+            assert input[0].shape[1] == 1
             tv, _ = target
-            iv = input
-            mi = isnan(iv)
+            # iv = input
+            # mi = isnan(iv)
+            # mask = isnan(tv) | mi
+            # valid_iv = iv[~mask]
+            # valid_tv = tv[~mask]
+
+            # # Compute MSE
+            # mse_loss = (valid_iv - valid_tv).pow(2).mean()
+
+            # # Compute variance of predictions and targets
+            # variance_tv = ((valid_tv - valid_tv.mean()).pow(2)).mean()
+            # variance_iv = ((valid_iv - valid_iv.mean()).pow(2)).mean()
+
+            # # Variance loss (maximize variance matching)
+            # variance_loss = (variance_iv - variance_tv).pow(2) + (
+            #     variance_tv / (1e-8 + variance_iv) - 1
+            # ).pow(2) * 0.01
+
+            # return (mse_loss + weight * variance_loss) ** 0.5 * 10 + mi.sum() / target[
+            #     0
+            # ].numel()
+
+            pred_mu, pred_q90 = input
+            mi = isnan(pred_mu) | isnan(pred_q90)
             mask = isnan(tv) | mi
-            valid_iv = iv[~mask]
+            valid_mu = pred_mu[~mask]
+            valid_q90 = pred_q90[~mask]
             valid_tv = tv[~mask]
+            delta = torch.exp(self.log_delta)  # 保证 >0
+            weight = torch.exp(self.log_var_wt)  # 保证 >0
+            lambda_mse = torch.exp(self.log_lambda_mse)
+            lambda_huber = torch.exp(self.log_lambda_huber)
+            lambda_q90 = torch.exp(self.log_sigma_q90)
 
-            # Compute MSE
-            mse_loss = (valid_iv - valid_tv).pow(2).mean()
+            # loss_huber = F.smooth_l1_loss(valid_mu, valid_tv, beta=delta)
+            u = valid_mu - valid_tv
+            abs_u = torch.abs(u)
+            # L_δ(u) = { 0.5 u²/δ   if |u|<δ;   |u| - 0.5δ  otherwise }
+            loss_huber = torch.where(
+                abs_u < delta, 0.5 * u**2 / delta, abs_u - 0.5 * delta
+            ).mean()
+            loss_mse = F.mse_loss(valid_mu, valid_tv)
+            u = valid_tv - valid_q90
+            loss_q90 = torch.mean(torch.max(tau * u, (tau - 1) * u))
 
+            #
             # Compute variance of predictions and targets
             variance_tv = ((valid_tv - valid_tv.mean()).pow(2)).mean()
-            variance_iv = ((valid_iv - valid_iv.mean()).pow(2)).mean()
+            variance_iv = ((valid_mu - valid_mu.mean()).pow(2)).mean()
 
             # Variance loss (maximize variance matching)
             variance_loss = (variance_iv - variance_tv).pow(2) + (
@@ -193,8 +195,11 @@ class Exp_crossformer(Exp_Basic):
             ).pow(2) * 0.01
 
             return (
-                (mse_loss + weight * variance_loss) ** 0.5
-            ) * 10 + mi.sum() / target[0].numel()
+                lambda_huber * loss_huber
+                + lambda_mse * loss_mse
+                + weight * variance_loss
+                + lambda_q90 * loss_q90
+            ) ** 0.5
 
         return (
             cross_entropy_mse_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans
@@ -245,7 +250,7 @@ class Exp_crossformer(Exp_Basic):
         train_steps = len(train_loader)
 
         model_optim = self._select_optimizer()
-        criterion = self._select_criterion(self.ycat, self.args.weight)
+        criterion = self._select_criterion(self.ycat)
         score = None
         spoch = 0
         if checkpoint is not None:
@@ -405,7 +410,7 @@ class Exp_crossformer(Exp_Basic):
 
         with torch.no_grad():
             for i, (batch_x, batch_y) in enumerate(test_loader):
-                pred, true = self._process_one_batch(test_data, batch_x, batch_y)
+                (pred,_), true = self._process_one_batch(test_data, batch_x, batch_y)
                 batch_size = pred.shape[0]
                 instance_num += batch_size
                 if run_metric:

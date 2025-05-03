@@ -89,12 +89,21 @@ class Crossformer(nn.Module):
         )
 
         # 7) Final adapter: map from embedding channels → out_dim
-        self.adapter = nn.Sequential(
-            nn.Linear(value_dim, out_dim * 2),
+        # self.adapter = nn.Sequential(
+        #     nn.Linear(value_dim, out_dim * 2),
+        #     nn.ReLU(),
+        #     nn.Linear(out_dim * 2, out_dim),
+        # )
+        self.adapter_mu = nn.Sequential(
+            nn.Linear(value_dim, out_dim*2),
             nn.ReLU(),
-            nn.Linear(out_dim * 2, out_dim),
+            nn.Linear(out_dim*2, out_dim)
         )
-
+        self.adapter_q90 = nn.Sequential(
+            nn.Linear(value_dim, out_dim*2),
+            nn.ReLU(),
+            nn.Linear(out_dim*2, out_dim)
+        )
         self.baseline = baseline
 
     def forward(self, x_seq):
@@ -126,7 +135,20 @@ class Crossformer(nn.Module):
         enc_out = self.encoder(x_enc)
 
         # 4) Prepare decoder input: just the pos‑emb repeated to B
-        dec_in = self.dec_pos_embedding.repeat(batch, 1, 1, 1)  # [B, C, S_dec, d_model]
+        # dec_in = self.dec_pos_embedding.repeat(batch, 1, 1, 1)  # [B, C, S_dec, d_model]
+
+        # # 5) Decode
+        # dec_out = self.decoder(dec_in, enc_out)  # [B, S_dec, C]
+
+        # # 6) Adapt to final output dimension
+        # #    decoder returns [B, S_dec, C], adapter expects (B*S_dec, C)
+        # #    but Linear on last dim works with [B, S_dec, C] directly in PyTorch
+        # predict = self.adapter(dec_out)  # [B, S_dec, out_dim]
+        dec_in = repeat(
+            self.dec_pos_embedding,
+            "b ts_d l d -> (repeat b) ts_d l d",
+            repeat=batch,
+        )        
 
         # 5) Decode
         dec_out = self.decoder(dec_in, enc_out)  # [B, S_dec, C]
@@ -134,9 +156,16 @@ class Crossformer(nn.Module):
         # 6) Adapt to final output dimension
         #    decoder returns [B, S_dec, C], adapter expects (B*S_dec, C)
         #    but Linear on last dim works with [B, S_dec, C] directly in PyTorch
-        predict = self.adapter(dec_out)  # [B, S_dec, out_dim]
+        # predict = self.adapter(dec_out)  # [B, S_dec, out_dim]
 
         # 7) slice to original horizon
-        predict = predict[:, : self.out_len, :]
+        # predict = predict[:, : self.out_len, :]
 
-        return base + predict
+        # return base + predict
+        pred_mu  = self.adapter_mu(dec_out)    # [B, pad_seg_num, out_dim]
+        pred_q90 = self.adapter_q90(dec_out)
+
+        pred_mu  = base + pred_mu[:, : self.out_len, :]
+        pred_q90 = base + pred_q90[:, : self.out_len, :]
+        
+        return pred_mu, pred_q90

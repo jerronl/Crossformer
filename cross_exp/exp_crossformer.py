@@ -28,7 +28,7 @@ class Exp_crossformer(Exp_Basic):
         self.loss_logits = nn.Parameter(
             torch.log(
                 torch.tensor(
-                    [args.weight, args.lambda_mse, args.lambda_huber, 0],
+                    [args.weight, args.lambda_mse, args.lambda_huber, 1],
                     dtype=torch.float32,
                 )
             )
@@ -175,7 +175,7 @@ class Exp_crossformer(Exp_Basic):
             valid_q90 = pred_q90[~mask]
             valid_tv = tv[~mask]
             delta = torch.exp(self.log_delta)  # 保证 >0
-            weights = F.softmax(self.loss_logits, dim=0)
+            weights = F.softmax(self.loss_logits, dim=0) + 0.01
             entropy_reg = (weights * torch.log(weights + 1e-8)).sum()
 
             # loss_huber = F.smooth_l1_loss(valid_mu, valid_tv, beta=delta)
@@ -188,6 +188,9 @@ class Exp_crossformer(Exp_Basic):
             loss_mse = F.mse_loss(valid_mu, valid_tv)
             u = valid_tv - valid_q90
             loss_q90 = torch.mean(torch.max(tau * u, (tau - 1) * u))
+            mask_pos = valid_tv > 0
+            u = valid_tv[mask_pos] - valid_q90[mask_pos]
+            loss_q90 += torch.mean(torch.max(tau * u, (tau - 1) * u))
             sigma_mu = torch.exp(self.log_sigma_mu)
             sigma_q90 = torch.exp(self.log_sigma_q90)
 
@@ -206,7 +209,7 @@ class Exp_crossformer(Exp_Basic):
                 + weights[1] * loss_mu_part
                 + weights[0] * variance_loss
                 + weights[1] * loss_q90_part
-            ) ** 0.5+(weights[3]+0.01)*entropy_reg 
+            ) ** 0.5 + weights[3] * entropy_reg
 
         return (
             cross_entropy_mse_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans
@@ -321,7 +324,11 @@ class Exp_crossformer(Exp_Basic):
                 loss.backward()
                 model_optim.step()
 
-            print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
+            print(
+                "Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time),
+                "weight",
+                self.loss_logits,
+            )
             train_loss = np.average(train_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)

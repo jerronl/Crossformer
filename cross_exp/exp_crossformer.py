@@ -28,7 +28,7 @@ class Exp_crossformer(Exp_Basic):
         self.loss_logits = nn.Parameter(
             torch.log(
                 torch.tensor(
-                    [args.weight, args.lambda_mse, args.lambda_huber, 1.0],
+                    [args.weight, args.lambda_mse, args.lambda_huber, 0],
                     dtype=torch.float32,
                 )
             )
@@ -176,6 +176,7 @@ class Exp_crossformer(Exp_Basic):
             valid_tv = tv[~mask]
             delta = torch.exp(self.log_delta)  # 保证 >0
             weights = F.softmax(self.loss_logits, dim=0)
+            entropy_reg = (weights * torch.log(weights + 1e-8)).sum()
 
             # loss_huber = F.smooth_l1_loss(valid_mu, valid_tv, beta=delta)
             u = valid_mu - valid_tv
@@ -204,8 +205,8 @@ class Exp_crossformer(Exp_Basic):
                 weights[2] * loss_huber
                 + weights[1] * loss_mu_part
                 + weights[0] * variance_loss
-                + weights[3] * loss_q90_part
-            ) ** 0.5
+                + weights[1] * loss_q90_part
+            ) ** 0.5+(weights[3]+0.01)*entropy_reg 
 
         return (
             cross_entropy_mse_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans

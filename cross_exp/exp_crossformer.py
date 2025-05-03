@@ -177,8 +177,8 @@ class Exp_crossformer(Exp_Basic):
             delta = torch.exp(self.log_delta)  # 保证 >0
             weights = F.softmax(self.loss_logits, dim=0)
             entropy_reg = (weights * torch.log(weights + 1e-8)).sum()
-            weights += weights.max() / len(weights)
-            weights /= weights.sum()
+            weights = weights + torch.std(weights) / len(weights)
+            weights = weights / weights.sum()
 
             # loss_huber = F.smooth_l1_loss(valid_mu, valid_tv, beta=delta)
             u = valid_mu - valid_tv

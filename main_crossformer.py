@@ -29,7 +29,7 @@ from utils.tools import string_split
 parser = argparse.ArgumentParser(description="CrossFormer")
 
 parser.add_argument("--data", type=str, default="vols", help="data")
-parser.add_argument("--weight", type=str, default=0.005, help="data")
+parser.add_argument("--weight", type=str, default=0.8, help="data")
 parser.add_argument(
     "--root_path", type=str, default=mydrive, help="root path of the data file"
 )

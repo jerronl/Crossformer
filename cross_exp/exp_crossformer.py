@@ -36,8 +36,8 @@ class Exp_crossformer(Exp_Basic):
         self.log_sigma_mu = nn.Parameter(torch.zeros(()))
         self.log_sigma_q90 = nn.Parameter(torch.zeros(()))
         self.log_delta = nn.Parameter(torch.log(torch.tensor(args.delta)))
-        self.weight = len(self.loss_logits) / 10 + args.weight + 1
-        self.weight = args.weight / self.weight, 0.1 / self.weight
+        self.weight = len(self.loss_logits) * 0.1 + args.weight + 1
+        self.weight = args.weight / self.weight, 0.1 / self.weight, 1 / self.weight
 
     def build_model(self, data):
         model = Crossformer(
@@ -99,7 +99,7 @@ class Exp_crossformer(Exp_Basic):
         return data_set, data_loader
 
     def _select_optimizer(self):
-        model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
+        model_optim = optim.Adam(self.parameters(), lr=self.args.learning_rate)
         return model_optim
 
     def _select_criterion(self, ycat):
@@ -177,7 +177,7 @@ class Exp_crossformer(Exp_Basic):
             valid_q90 = pred_q90[~mask]
             valid_tv = tv[~mask]
             delta = torch.exp(self.log_delta)
-            weights = F.softmax(self.loss_logits, dim=0) * (1 - self.weight)
+            weights = F.softmax(self.loss_logits, dim=0) * self.weight[2]
             # entropy_reg = (weights * torch.log(weights + 1e-8)).sum()
             # weights = weights + torch.std(weights) / len(weights)
             # weights = weights / weights.sum() * 0.1
@@ -210,12 +210,16 @@ class Exp_crossformer(Exp_Basic):
                 variance_tv / (1e-8 + variance_iv) - 1
             ).pow(2) * 0.01
             return (
-                (weights[0] + self.weight[1]) * loss_mu_part
-                + (weights[1] + self.weight[1]) * loss_huber
+                (
+                    (weights[0] + self.weight[1]) * loss_mu_part
+                    + (weights[1] + self.weight[1]) * loss_huber
+                    + self.weight[0] * variance_loss
+                )
+                ** 0.5
                 + (weights[2] + self.weight[1]) * loss_q90_part
                 + (weights[3] + self.weight[1]) * loss_q90_pos
-                + self.weight[0] * variance_loss
-            ) ** 0.5 + mi.sum() / target[0].numel()
+                + mi.sum() / target[0].numel()
+            )
 
         return (
             cross_entropy_mse_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans

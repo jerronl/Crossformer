@@ -1,10 +1,11 @@
 import os
 import torch
 import numpy as np
+from torch import nn
 
-
-class Exp_Basic(object):
+class Exp_Basic(nn.Module):
     def __init__(self, args):
+        super(Exp_Basic, self).__init__()
         self.args = args
         self.device = self._acquire_device()
 

@@ -36,7 +36,7 @@ class Exp_crossformer(Exp_Basic):
         self.log_sigma_mu = nn.Parameter(torch.zeros(()))
         self.log_sigma_q90 = nn.Parameter(torch.zeros(()))
         self.log_delta = nn.Parameter(torch.log(torch.tensor(args.delta)))
-        self.weight = len(self.loss_logits) * 0.1 + args.weight + 1
+        self.weight = len(self.loss_logits) * 0.1 + args.weight + 2
         self.weight = args.weight / self.weight, 0.1 / self.weight, 1 / self.weight
 
     def build_model(self, data):
@@ -211,7 +211,7 @@ class Exp_crossformer(Exp_Basic):
             ).pow(2) * 0.01
             return (
                 (
-                    (weights[0] + self.weight[1]) * loss_mu_part
+                    (weights[0] + self.weight[2]) * loss_mu_part
                     + (weights[1] + self.weight[1]) * loss_huber
                     + self.weight[0] * variance_loss
                 )
@@ -277,7 +277,8 @@ class Exp_crossformer(Exp_Basic):
             try:
                 self.model.load_state_dict(checkpoint[0][0])
                 model_optim.load_state_dict(checkpoint[0][1])
-                score = abs(checkpoint[1])
+                score = self.vali(vali_data, vali_loader, criterion)
+                # score = abs(checkpoint[1])
                 spoch = checkpoint[0][2]
                 print_color(
                     93,

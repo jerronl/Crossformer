@@ -28,7 +28,7 @@ class Exp_crossformer(Exp_Basic):
         self.loss_logits = nn.Parameter(
             torch.log(
                 torch.tensor(
-                    [args.weight, args.lambda_mse, args.lambda_huber, 0.1],
+                    [args.lambda_mse, args.lambda_huber, 0.1, 0.1],
                     dtype=torch.float32,
                 )
             )
@@ -36,6 +36,8 @@ class Exp_crossformer(Exp_Basic):
         self.log_sigma_mu = nn.Parameter(torch.zeros(()))
         self.log_sigma_q90 = nn.Parameter(torch.zeros(()))
         self.log_delta = nn.Parameter(torch.log(torch.tensor(args.delta)))
+        self.weight = len(self.loss_logits) / 10 + args.weight + 1
+        self.weight = args.weight / self.weight, 0.1 / self.weight
 
     def build_model(self, data):
         model = Crossformer(
@@ -174,11 +176,11 @@ class Exp_crossformer(Exp_Basic):
             valid_mu = pred_mu[~mask]
             valid_q90 = pred_q90[~mask]
             valid_tv = tv[~mask]
-            delta = torch.exp(self.log_delta)  # 保证 >0
-            weights = F.softmax(self.loss_logits, dim=0)
-            entropy_reg = (weights * torch.log(weights + 1e-8)).sum()
-            weights = weights + torch.std(weights) / len(weights)
-            weights = weights / weights.sum() * 0.1
+            delta = torch.exp(self.log_delta)
+            weights = F.softmax(self.loss_logits, dim=0) * (1 - self.weight)
+            # entropy_reg = (weights * torch.log(weights + 1e-8)).sum()
+            # weights = weights + torch.std(weights) / len(weights)
+            # weights = weights / weights.sum() * 0.1
 
             # loss_huber = F.smooth_l1_loss(valid_mu, valid_tv, beta=delta)
             u = valid_mu - valid_tv
@@ -192,12 +194,13 @@ class Exp_crossformer(Exp_Basic):
             loss_q90 = torch.mean(torch.max(tau * u, (tau - 1) * u))
             mask_pos = valid_tv > 0
             u = valid_tv[mask_pos] - valid_q90[mask_pos]
-            loss_q90 += torch.mean(torch.max(tau * u, (tau - 1) * u))
+            loss_q90_pos = torch.mean(torch.max(tau * u, (tau - 1) * u))
             sigma_mu = torch.exp(self.log_sigma_mu)
             sigma_q90 = torch.exp(self.log_sigma_q90)
 
             loss_mu_part = loss_mse / (2 * sigma_mu**2) + torch.log(sigma_mu)
             loss_q90_part = loss_q90 / (2 * sigma_q90**2) + torch.log(sigma_q90)
+            loss_q90_pos = loss_q90_pos / (2 * sigma_q90**2) + torch.log(sigma_q90)
             # Compute variance of predictions and targets
             variance_tv = ((valid_tv - valid_tv.mean()).pow(2)).mean()
             variance_iv = ((valid_mu - valid_mu.mean()).pow(2)).mean()
@@ -207,11 +210,12 @@ class Exp_crossformer(Exp_Basic):
                 variance_tv / (1e-8 + variance_iv) - 1
             ).pow(2) * 0.01
             return (
-                weights[2] * loss_huber
-                + (weights[1] + 0.5) * loss_mu_part
-                + (weights[0] + 0.4) * variance_loss
-                + weights[1] * loss_q90_part
-            ) ** 0.5 + weights[3] * entropy_reg
+                (weights[0] + self.weight[1]) * loss_mu_part
+                + (weights[1] + self.weight[1]) * loss_huber
+                + (weights[2] + self.weight[1]) * loss_q90_part
+                + (weights[3] + self.weight[1]) * loss_q90_pos
+                + self.weight[0] * variance_loss
+            ) ** 0.5 + mi.sum() / target[0].numel()
 
         return (
             cross_entropy_mse_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans
@@ -272,7 +276,7 @@ class Exp_crossformer(Exp_Basic):
                 score = abs(checkpoint[1])
                 spoch = checkpoint[0][2]
                 print_color(
-                    94,
+                    93,
                     f"suc to load. score {score} epoch {spoch} from:",
                     best_model_path,
                 )
@@ -397,7 +401,7 @@ class Exp_crossformer(Exp_Basic):
             )
             try:
                 self.checkpoint[key] = torch.load(best_model_path, weights_only=False)
-                print_color(94, "suc to load", best_model_path)
+                print_color(93, "suc to load", best_model_path)
             except (
                 FileNotFoundError,
                 RuntimeError,
@@ -457,7 +461,7 @@ class Exp_crossformer(Exp_Basic):
 
             mae, mse, rmse, mape, mspe, accr = metrics_mean
             print_color(
-                93,
+                94,
                 f"mae:{mae:.3f}, mse:{mse:.3f}, rmse:{rmse:.3f}, mape:{mape:.3f}, mspe:{mspe:.3f}, accr:{accr}",
             )
 

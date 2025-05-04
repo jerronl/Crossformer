@@ -138,7 +138,7 @@ class DatasetMTS(Dataset):
                 if self.query is not None:
                     df = df.query(self.query)
                     ds = [0, 0, 0, len(df) - 1]
-                elif table in self.data_split:
+                elif table in self.data_split and self.data_split[table][-1]<len(df):
                     ds = self.data_split[table]
                 else:
                     ds = (data_split * uniform(0.8, 0.9) * len(df)).astype(int)

@@ -36,7 +36,7 @@ class Exp_crossformer(Exp_Basic):
         self.log_sigma_mu = nn.Parameter(torch.zeros(()))
         self.log_sigma_q90 = nn.Parameter(torch.zeros(()))
         self.log_delta = nn.Parameter(torch.log(torch.tensor(args.delta)))
-        self.weight = len(self.loss_logits) * 0.1 + args.weight + 2
+        self.weight = len(self.loss_logits) * 0.1 + args.weight + 1.2
         self.weight = args.weight / self.weight, 0.1 / self.weight, 1 / self.weight
 
     def build_model(self, data):
@@ -70,7 +70,7 @@ class Exp_crossformer(Exp_Basic):
 
         drop_last = False
         batch_size = args.batch_size
-        shuffle_flag = (flag == "train")
+        shuffle_flag = flag == "train"
         data_set = DatasetMTS(
             root_path=args.root_path,
             data_path=data_path if data_path is not None else args.data_path,
@@ -107,33 +107,36 @@ class Exp_crossformer(Exp_Basic):
                 :, 0, -ycat:
             ]
             mc = isnan(ic).any(dim=1)
-            adjacents = [
-                torch.clamp(tc[~mc] + i, 0, ic.size(1) - 1) for i in [1, -1]
-            ] + [
-                torch.clamp(ic.size(1) - tc[~mc] + i, 0, ic.size(1) - 1)
-                for i in [
-                    -1,
-                ]  # -1, -2]
-            ]
-            log_probs_valid = F.log_softmax(
-                ic[~mc], dim=-1
-            )  # Shape: (batch_size, num_classes)
-            tc_valid = tc[~mc]  # Shape: (valid_batch_size,)
+            if mc.sum() == 0:
+                total_loss = torch.tensor(1e-8, device=mc.device)
+            else:
+                adjacents = [
+                    torch.clamp(tc[~mc] + i, 0, ic.size(1) - 1) for i in [1, -1]
+                ] + [
+                    torch.clamp(ic.size(1) - tc[~mc] + i, 0, ic.size(1) - 1)
+                    for i in [
+                        -1,
+                    ]  # -1, -2]
+                ]
+                log_probs_valid = F.log_softmax(
+                    ic[~mc], dim=-1
+                )  # Shape: (batch_size, num_classes)
+                tc_valid = tc[~mc]  # Shape: (valid_batch_size,)
 
-            # Exact match loss
-            exact_match_loss = -log_probs_valid[
-                torch.arange(log_probs_valid.size(0)), tc_valid
-            ].mean()
+                # Exact match loss
+                exact_match_loss = -log_probs_valid[
+                    torch.arange(log_probs_valid.size(0)), tc_valid
+                ].mean()
 
-            # Compute adjacent losses
-            adjacent_losses = [
-                -log_probs_valid[torch.arange(log_probs_valid.size(0)), adjacent].mean()
-                for adjacent in adjacents
-            ]
-            # Combine losses
-            total_loss = exact_match_loss + sum(adjacent_losses) / 4.0 / len(
-                adjacent_losses
-            )
+                # Compute adjacent losses
+                adjacent_losses = [
+                    -log_probs_valid[torch.arange(log_probs_valid.size(0)), adjacent].mean()
+                    for adjacent in adjacents
+                ]
+                # Combine losses
+                total_loss = exact_match_loss + sum(adjacent_losses) / 4.0 / len(
+                    adjacent_losses
+                )
             return (
                 total_loss
                 + cross_mse_loss_with_nans(iv, target)
@@ -169,10 +172,12 @@ class Exp_crossformer(Exp_Basic):
             mi = isnan(pred_mu) | isnan(pred_q90)
             mask = isnan(tv) | mi
             valid_mu = pred_mu[~mask]
+            if valid_mu.numel() == 0:
+                return torch.tensor(1e-8, device=valid_tv.device)
             valid_q90 = pred_q90[~mask]
             valid_tv = tv[~mask]
             delta = torch.exp(self.log_delta)
-            weights = F.softmax(self.loss_logits, dim=0) * self.weight[2]
+            weights = F.softmax(self.loss_logits, dim=0) * self.weight[1] * 2
             # entropy_reg = (weights * torch.log(weights + 1e-8)).sum()
             # weights = weights + torch.std(weights) / len(weights)
             # weights = weights / weights.sum() * 0.1
@@ -188,10 +193,13 @@ class Exp_crossformer(Exp_Basic):
             u = valid_tv - valid_q90
             loss_q90 = torch.mean(torch.max(tau * u, (tau - 1) * u))
             mask_pos = valid_tv > 0
-            u = valid_tv[mask_pos] - valid_q90[mask_pos]
-            loss_q90_pos = torch.mean(torch.max(tau * u, (tau - 1) * u))
-            sigma_mu = torch.exp(self.log_sigma_mu)
-            sigma_q90 = torch.exp(self.log_sigma_q90)
+            if mask_pos.sum() == 0:
+                loss_q90_pos = torch.tensor(1e-8, device=valid_tv.device)
+            else:
+                u = valid_tv[mask_pos] - valid_q90[mask_pos]
+                loss_q90_pos = torch.mean(torch.max(tau * u, (tau - 1) * u))
+            sigma_mu = torch.exp(self.log_sigma_mu).clamp(min=1e-3, max=1e3)
+            sigma_q90 = torch.exp(self.log_sigma_q90).clamp(min=1e-3, max=1e3)
 
             loss_mu_part = loss_mse / (2 * sigma_mu**2) + torch.log(sigma_mu)
             loss_q90_part = loss_q90 / (2 * sigma_q90**2) + torch.log(sigma_q90)
@@ -205,12 +213,14 @@ class Exp_crossformer(Exp_Basic):
                 variance_tv / (1e-8 + variance_iv) - 1
             ).pow(2) * 0.01
             return (
-                (
-                    (weights[0] + self.weight[2]) * loss_mu_part
-                    + (weights[1] + self.weight[1]) * loss_huber
-                    + self.weight[0] * variance_loss
+                torch.sqrt(
+                    torch.clamp(
+                        (weights[0] + self.weight[2]) * loss_mu_part
+                        + (weights[1] + self.weight[1]) * loss_huber
+                        + self.weight[0] * variance_loss,
+                        min=1e-6,
+                    )
                 )
-                ** 0.5
                 + (weights[2] + self.weight[1]) * loss_q90_part
                 + (weights[3] + self.weight[1]) * loss_q90_pos
                 + mi.sum() / target[0].numel()

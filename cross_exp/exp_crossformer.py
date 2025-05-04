@@ -68,14 +68,9 @@ class Exp_crossformer(Exp_Basic):
     def _get_data(self, flag, data=None, data_path=None, scaler=None, data_split=None):
         args = self.args
 
-        if flag == "test":
-            shuffle_flag = False
-            drop_last = False
-            batch_size = args.batch_size
-        else:
-            shuffle_flag = True
-            drop_last = False
-            batch_size = args.batch_size
+        drop_last = False
+        batch_size = args.batch_size
+        shuffle_flag = (flag == "train")
         data_set = DatasetMTS(
             root_path=args.root_path,
             data_path=data_path if data_path is not None else args.data_path,
@@ -275,7 +270,7 @@ class Exp_crossformer(Exp_Basic):
         spoch = 0
         if checkpoint is not None:
             try:
-                self.model.load_state_dict(checkpoint[0][0])
+                self.load_state_dict(checkpoint[0][0])
                 model_optim.load_state_dict(checkpoint[0][1])
                 score = self.vali(vali_data, vali_loader, criterion)
                 # score = abs(checkpoint[1])
@@ -350,9 +345,9 @@ class Exp_crossformer(Exp_Basic):
             early_stopping(
                 vali_loss,
                 (
-                    self.model.state_dict(),
+                    self.state_dict(),
                     model_optim.state_dict(),
-                    epoch,
+                    epoch + 1,
                     train_data.scaler,
                     train_data.data_split,
                 ),
@@ -367,18 +362,14 @@ class Exp_crossformer(Exp_Basic):
             ):
                 best_model_path = path + "/" + "checkpoint.pth"
                 checkpoint = list(torch.load(best_model_path, weights_only=False))
-                self.model.load_state_dict(checkpoint[0][0])
+                self.load_state_dict(checkpoint[0][0])
                 model_optim.load_state_dict(checkpoint[0][1])
 
         best_model_path = path + "/" + "checkpoint.pth"
         checkpoint = list(torch.load(best_model_path, weights_only=False))
-        self.model.load_state_dict(checkpoint[0][0])
+        self.load_state_dict(checkpoint[0][0])
         checkpoint[0] = list(checkpoint[0])
-        checkpoint[0][0] = (
-            self.model.module.state_dict()
-            if isinstance(self.model, DataParallel)
-            else self.model.state_dict()
-        )
+        checkpoint[0][0] = self.state_dict()
         torch.save(checkpoint, path + "/checkpoint.pth")
         self.checkpoint[key] = (self.model, checkpoint[0][3], checkpoint[0][4])
         torch.save(

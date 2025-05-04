@@ -275,7 +275,7 @@ data_parser = {
         "patience": 3,
         "train_epochs": 100,
         "data_path": tables,
-        "weight": 0.01,
+        "weight": 0.8,
     },
 }
 results = []

@@ -33,14 +33,14 @@ parser.add_argument("--weight", type=str, default=0.8, help="data")
 parser.add_argument(
     "--root_path", type=str, default=mydrive, help="root path of the data file"
 )
-parser.add_argument("--delta",        type=float, default=1.0, help="Huber 损失 δ")
+parser.add_argument("--delta", type=float, default=1.0, help="Huber 损失 δ")
 # parser.add_argument("--thresh",       type=float, default=0.03, help="加权 MSE 阈值")
 # parser.add_argument("--alpha",        type=float, default=1.0, help="极端样本权重 α")
 # parser.add_argument("--tau",          type=float, default=0.9, help="Quantile τ")
 parser.add_argument("--lambda_huber", type=float, default=1.0)
 parser.add_argument("--lambda_mse", type=float, default=1.0)
-parser.add_argument("--lambda_reg",   type=float, default=0.5)
-parser.add_argument("--lambda_q90",   type=float, default=0.5)
+parser.add_argument("--lambda_reg", type=float, default=0.5)
+parser.add_argument("--lambda_q90", type=float, default=0.5)
 
 parser.add_argument("--data_path", type=list, default=tables, help="data file")
 parser.add_argument(
@@ -306,17 +306,17 @@ for ii in range(args.itr):
     exp.train(setting, "vols")
 
     print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
-    preds, trues, _ = exp.test(
+    preds, trues, metrics = exp.test(
         setting, "vols", True, data_path=[tables[0]], inverse=True
     )
-    print(preds.shape, trues.shape)
+    print(preds.shape, trues.shape, metrics)
 
     exp.train(setting, "prcs")
     for table in tables:
-        preds, trues, _ = exp.test(
+        preds, trues, metrics = exp.test(
             setting, "prcs", True, data_path=[table], inverse=True
         )
-        print(preds.shape, trues.shape)
+        print(preds.shape, trues.shape, metrics)
 
 exp = Exp_crossformer(args)
 # df=pd.read_csv(r'E:\mydoc\git\trade/input.csv')

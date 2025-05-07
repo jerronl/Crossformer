@@ -95,14 +95,23 @@ class Crossformer(nn.Module):
         #     nn.Linear(out_dim * 2, out_dim),
         # )
         self.adapter_mu = nn.Sequential(
-            nn.Linear(value_dim, out_dim*2),
+            nn.Linear(value_dim, out_dim * 2),
             nn.ReLU(),
-            nn.Linear(out_dim*2, out_dim)
+            nn.Linear(out_dim * 2, out_dim - ycat),
         )
         self.adapter_q90 = nn.Sequential(
-            nn.Linear(value_dim, out_dim*2),
+            nn.Linear(value_dim, out_dim * 2),
             nn.ReLU(),
-            nn.Linear(out_dim*2, out_dim)
+            nn.Linear(out_dim * 2, out_dim - ycat),
+        )
+        self.adapter_cat = (
+            nn.Sequential(
+                nn.Linear(value_dim, out_dim * 2),
+                nn.ReLU(),
+                nn.Linear(out_dim * 2, ycat),
+            )
+            if ycat
+            else None
         )
         self.baseline = baseline
 
@@ -148,7 +157,7 @@ class Crossformer(nn.Module):
             self.dec_pos_embedding,
             "b ts_d l d -> (repeat b) ts_d l d",
             repeat=batch,
-        )        
+        )
 
         # 5) Decode
         dec_out = self.decoder(dec_in, enc_out)  # [B, S_dec, C]
@@ -162,10 +171,16 @@ class Crossformer(nn.Module):
         # predict = predict[:, : self.out_len, :]
 
         # return base + predict
-        pred_mu  = self.adapter_mu(dec_out)    # [B, pad_seg_num, out_dim]
+        pred_mu = self.adapter_mu(dec_out)  # [B, pad_seg_num, out_dim]
         pred_q90 = self.adapter_q90(dec_out)
 
-        pred_mu  = base + pred_mu[:, : self.out_len, :]
+        pred_mu = base + pred_mu[:, : self.out_len, :]
         pred_q90 = base + pred_q90[:, : self.out_len, :]
-        
-        return pred_mu, pred_q90
+
+        pred_cat = (
+            base + self.adapter_cat(dec_out)[:, : self.out_len, :]
+            if self.adapter_cat
+            else None
+        )
+
+        return pred_mu, pred_q90, pred_cat

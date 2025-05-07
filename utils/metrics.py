@@ -35,43 +35,14 @@ def MSPE(pred, true):
 
 
 def make_metric(ycat):
-    def metric_cat(pred, true):
-        tv, tc = (
-            true
-            if isinstance(true[0], np.ndarray)
-            else (true[0].detach().cpu().numpy(), true[1].detach().cpu().numpy())
-        )
-        iv, ic = (
-            (pred[:, :-ycat], pred[:, -ycat:])
-            if isinstance(pred, np.ndarray)
-            else (
-                pred[:, :, :-ycat].detach().cpu().numpy(),
-                pred[:, 0, -ycat:].detach().cpu().numpy(),
-            )
-        )
+    def metric_cat(iv, tv, ic, tc):
         mae = MAE(iv, tv)
         mse = MSE(iv, tv)
         rmse = RMSE(iv, tv)
         mape = MAPE(iv, tv)
         mspe = MSPE(iv, tv)
-        accr = accuracy_score(np.argmax(ic, axis=1), tc)
+        accr = -1 if ic is None else accuracy_score(np.argmax(ic, axis=2), tc)
 
         return mae, mse, rmse, mape, mspe, accr
 
-    def metric(pred, true):
-
-        tv, _ = (
-            true
-            if isinstance(true[0], np.ndarray)
-            else (true[0].detach().cpu().numpy(), true[1].detach().cpu().numpy())
-        )
-        iv = pred if isinstance(pred, np.ndarray) else pred.detach().cpu().numpy()
-        mae = MAE(iv, tv)
-        mse = MSE(iv, tv)
-        rmse = RMSE(iv, tv)
-        mape = MAPE(iv, tv)
-        mspe = MSPE(iv, tv)
-
-        return mae, mse, rmse, mape, mspe, -1
-
-    return metric_cat if ycat > 0 else metric
+    return metric_cat

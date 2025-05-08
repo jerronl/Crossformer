@@ -20,6 +20,16 @@ from utils.metrics import make_metric
 warnings.filterwarnings("ignore")
 
 
+def nanstd(x: torch.Tensor, dim=0, unbiased=False):
+    mask = ~torch.isnan(x)
+    count = mask.sum(dim)
+    mean = torch.nanmean(x, dim)
+    diff = (x - mean).pow(2)
+    diff[~mask] = 0
+    var = diff.sum(dim) / (count - (1 if unbiased else 0)).clamp(min=1)
+    return torch.sqrt(var)
+
+
 def cross_entropy_with_nans(ic, tc):
     mc = isnan(ic).any(dim=1)
     if mc.sum() == 0:
@@ -166,7 +176,9 @@ class Exp_crossformer(Exp_Basic):
             loss_huber = torch.where(
                 abs_u < delta, 0.5 * u**2 / delta, abs_u - 0.5 * delta
             ).mean()
-            loss_mse = ((1 + self.alpha * valid_tv.abs()) * u.pow(2)).mean()
+            loss_mse = (
+                (1 + (self.alpha * valid_tv.abs()).clamp(0, 0.5)) * u.pow(2)
+            ).mean()
             u = valid_tv - valid_q90
             loss_q90 = torch.mean(torch.max(tau * u, (tau - 1) * u))
             mask_pos = valid_tv > 0
@@ -182,13 +194,14 @@ class Exp_crossformer(Exp_Basic):
             loss_q90_part = loss_q90 / (2 * sigma_q90**2) + torch.log(sigma_q90)
             loss_q90_pos = loss_q90_pos / (2 * sigma_q90**2) + torch.log(sigma_q90)
             # Compute variance of predictions and targets
-            variance_tv = ((valid_tv - valid_tv.mean()).pow(2)).mean()
-            variance_iv = ((valid_mu - valid_mu.mean()).pow(2)).mean()
+            variance_tv = nanstd(tv)
+            variance_iv = nanstd(pred_mu)
 
             # Variance loss (maximize variance matching)
-            variance_loss = (variance_iv - variance_tv).pow(2) + (
-                variance_tv / (1e-8 + variance_iv) - 1
-            ).pow(2) * 0.5
+            variance_loss = (
+                (variance_iv - variance_tv).pow(2)
+                + (variance_tv / (1e-8 + variance_iv) - 1).pow(2) * 0.01
+            ).mean()
             return (
                 torch.sqrt(
                     torch.clamp(
@@ -221,12 +234,12 @@ class Exp_crossformer(Exp_Basic):
                 yc.append(tc)
         pred = np.concatenate(pred)
         y = np.concatenate(y)
-        mse = np.mean((1 + self.alpha * np.abs(y)) * (pred - y) ** 2)
+        mse = np.mean((1 + np.minimum(self.alpha * np.abs(y), 0.5)) * (pred - y) ** 2)
 
-        var_y = np.mean((y - np.mean(y)) ** 2)
-        var_p = np.mean((pred - np.mean(pred)) ** 2)
-        var_abs = (var_p - var_y) ** 2
-        var_rel = (var_y / (var_p + 1e-8) - 1) ** 2
+        var_y = np.std(y, axis=0)
+        var_p = np.std(pred, axis=0)
+        var_abs = np.mean((var_p - var_y) ** 2)
+        # var_rel = np.mean((var_y / (var_p + 1e-8) - 1) ** 2)
         if ic[0] is None:
             ce = 0
         else:
@@ -235,8 +248,8 @@ class Exp_crossformer(Exp_Basic):
                 torch.from_numpy(np.concatenate(yc)),
             )
 
-        self.model.train()
-        return mse + var_abs + var_rel + ce
+        # self.model.train()
+        return mse + var_abs + ce
 
     def train(self, setting, data):
         checkpoint = data_split = None
@@ -477,10 +490,12 @@ class Exp_crossformer(Exp_Basic):
         else:
             metrics_mean = ()
 
-        ny=y.shape[-1]
+        ny = y.shape[-1]
         return (
-            (pred if ic is None else np.concatenate([pred, ic], axis=-1)).reshape((-1,ny)),
-            y.reshape((-1,ny)),
+            (pred if ic is None else np.concatenate([pred, ic], axis=-1)).reshape(
+                (-1, ny)
+            ),
+            y.reshape((-1, ny)),
             metrics_mean,
         )
 

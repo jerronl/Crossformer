@@ -490,12 +490,11 @@ class Exp_crossformer(Exp_Basic):
         else:
             metrics_mean = ()
 
-        ny = y.shape[-1]
         return (
-            (pred if ic is None else np.concatenate([pred, ic], axis=-1)).reshape(
-                (-1, ny)
+            np.squeeze(
+                (pred if ic is None else np.concatenate([pred, ic], axis=-1)), axis=1
             ),
-            y.reshape((-1, ny)),
+            np.squeeze(y, axis=1),
             metrics_mean,
         )
 

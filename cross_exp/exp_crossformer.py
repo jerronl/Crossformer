@@ -85,6 +85,7 @@ class Exp_crossformer(Exp_Basic):
         self.weight = len(self.loss_logits) * 0.1 + args.weight + 1.2
         self.weight = 1 / self.weight, 0.1 / self.weight, args.weight / self.weight
         self.alpha = 1 / 6
+        self.step=args.step
 
     def build_model(self, data):
         model = Crossformer(
@@ -298,6 +299,7 @@ class Exp_crossformer(Exp_Basic):
             patience=self.args.patience,
             verbose=True,
             best_score=score,
+            step=self.step
         )
         for epoch in range(spoch, self.args.train_epochs):
             time_now = time.time()

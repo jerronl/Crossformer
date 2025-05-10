@@ -5,7 +5,7 @@ import json
 
 class EarlyStopping:
     def __init__(
-        self, lradj, learning_rate, patience=7, verbose=False, delta=0, best_score=None
+        self, lradj, learning_rate, patience=7, verbose=False, delta=0, best_score=None,step=1
     ):
         self.patience = patience
         self.verbose = verbose
@@ -33,6 +33,8 @@ class EarlyStopping:
             }
         else:
             self.lr_adjust = {}
+        if step>1:
+            self.lr_adjust = {k * step: v for k, v in self.lr_adjust.items()}
 
     def __call__(self, val_loss, model, path):
         score = val_loss
@@ -98,7 +100,8 @@ def init_args():
     parser = argparse.ArgumentParser(description="CrossFormer")
 
     parser.add_argument("--data", type=str, default="vols", help="data")
-    parser.add_argument("--weight", type=float, default=0.8, help="data")
+    parser.add_argument("--step", type=int, default=1, help="step")
+    parser.add_argument("--weight", type=float, default=0.8, help="weight")
     parser.add_argument(
         "--root_path", type=str, default='', help="root path of the data file"
     )

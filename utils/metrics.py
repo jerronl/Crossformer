@@ -1,6 +1,5 @@
 import numpy as np
-from sklearn.metrics import accuracy_score
-
+from sklearn.metrics import log_loss
 
 def RSE(pred, true):
     return np.sqrt(np.sum((true - pred) ** 2)) / np.sqrt(
@@ -41,7 +40,7 @@ def make_metric(ycat):
         rmse = RMSE(iv, tv)
         mape = MAPE(iv, tv)
         mspe = MSPE(iv, tv)
-        accr = -1 if ic is None else accuracy_score(np.argmax(ic, axis=2), tc)
+        accr = -1 if ic is None else log_loss(np.eye(ic.shape[-1])[tc.flatten()], ic.reshape(-1,ic.shape[-1]))
 
         return mae, mse, rmse, mape, mspe, accr
 

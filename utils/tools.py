@@ -98,7 +98,7 @@ def init_args():
     parser = argparse.ArgumentParser(description="CrossFormer")
 
     parser.add_argument("--data", type=str, default="vols", help="data")
-    parser.add_argument("--weight", type=str, default=0.8, help="data")
+    parser.add_argument("--weight", type=float, default=0.8, help="data")
     parser.add_argument(
         "--root_path", type=str, default='', help="root path of the data file"
     )
@@ -166,7 +166,7 @@ def init_args():
         "--learning_rate", type=float, default=1e-4, help="optimizer initial learning rate"
     )
     parser.add_argument("--lradj", type=str, default="type1", help="adjust learning rate")
-    parser.add_argument("--itr", type=int, default=0, help="experiments times")
+    parser.add_argument("--itr", type=int, default=1, help="experiments times")
 
     parser.add_argument(
         "--save_pred",

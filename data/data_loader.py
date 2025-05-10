@@ -366,6 +366,6 @@ class DatasetMTS(Dataset):
                 ic = F.softmax(ic.cpu(), 2)
         else:
             iv, sc = data
-        sc = sc.cpu()
+            sc = sc.cpu()
         dt = self.scaler[-1].inverse_transform(iv.cpu())
         return (dt, sc, ic) if len(data) > 2 else (dt, sc)

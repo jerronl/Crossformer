@@ -34,7 +34,7 @@ def cross_entropy_with_nans(ic, tc):
     # ic: (B, 1, C), tc: (B,)
     mc = ~torch.isnan(ic).any(dim=2).squeeze(1)  # mask of valid samples
     if mc.sum() == 0:
-        total_loss = torch.tensor(1e-8, device=ic.device)
+        return mc.sum() * 0 + 1e-8
     else:
         # valid indices
         tc_valid = tc[mc]  # (valid,)
@@ -148,14 +148,14 @@ class Exp_crossformer(Exp_Basic):
             )
 
         def cross_mse_loss_with_nans(input, target):
-            pred_mu, pred_q90, _ = input
+            pred_mu, _, _ = input
             assert pred_mu.shape[1] == 1
             tv, _ = target
-            mi = isnan(pred_mu) | isnan(pred_q90)
+            mi = isnan(pred_mu) 
             mask = isnan(tv) | mi
             valid_mu = pred_mu[~mask]
             if valid_mu.numel() == 0:
-                return torch.tensor(1e-8, device=valid_mu.device)
+                return valid_mu.sum() * 0 + 1e-8
             valid_tv = tv[~mask]
             delta = torch.exp(self.log_delta)
             weights = F.softmax(self.loss_logits, dim=0) * self.weight[1] * 2
@@ -481,9 +481,7 @@ class Exp_crossformer(Exp_Basic):
 
     def _process_one_batch(self, dataset_object, batch_x, batch_y, inverse=False):
         batch_x = [x.float().to(self.device) for x in batch_x]
-        batch_y = batch_y[0].float().to(self.device), batch_y[1].type(
-            torch.LongTensor
-        ).to(self.device)
+        batch_y = batch_y[0].float().to(self.device), batch_y[1].long().to(self.device)
 
         outputs = self.model(batch_x)
 

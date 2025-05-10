@@ -30,6 +30,13 @@ def nanstd(x: torch.Tensor, dim=0, unbiased=False):
     return torch.sqrt(var)
 
 
+def fuzzy_accuracy(pred_logits, true_labels):
+    pred_class = pred_logits.argmax(dim=-1)
+    diff = (pred_class - true_labels).abs()
+    score = torch.where(diff == 0, 1.0, torch.where(diff == 1, 0.25, 0.0))
+    return score.mean().item()
+
+
 def cross_entropy_with_nans(ic, tc):
     # ic: (B, 1, C), tc: (B,)
     mc = ~torch.isnan(ic).any(dim=2).squeeze(1)  # mask of valid samples
@@ -41,13 +48,13 @@ def cross_entropy_with_nans(ic, tc):
         log_probs_valid = F.log_softmax(ic[mc][:, 0, :], dim=-1)  # (valid, C)
 
         # exact match
-        exact_loss = -log_probs_valid[torch.arange(log_probs_valid.size(0)), tc_valid].mean()
+        exact_loss = -log_probs_valid[
+            torch.arange(log_probs_valid.size(0)), tc_valid
+        ].mean()
 
         # adjacent categories
         num_classes = ic.size(-1)
-        adjacents = [
-            torch.clamp(tc_valid + i, 0, num_classes - 1) for i in [1, -1]
-        ] 
+        adjacents = [torch.clamp(tc_valid + i, 0, num_classes - 1) for i in [1, -1]]
 
         adjacent_losses = [
             -log_probs_valid[torch.arange(log_probs_valid.size(0)), adj].mean()
@@ -58,6 +65,7 @@ def cross_entropy_with_nans(ic, tc):
     # Add penalty for missing samples
     return total_loss + (~mc).sum() / tc.numel()
 
+
 class Exp_crossformer(Exp_Basic):
     def __init__(self, args):
         super(Exp_crossformer, self).__init__(args)
@@ -66,7 +74,7 @@ class Exp_crossformer(Exp_Basic):
         self.loss_logits = nn.Parameter(
             torch.log(
                 torch.tensor(
-                    [args.lambda_mse, args.lambda_huber,0.1],
+                    [args.lambda_mse, args.lambda_huber, 0.1],
                     dtype=torch.float32,
                 )
             )
@@ -151,7 +159,7 @@ class Exp_crossformer(Exp_Basic):
             pred_mu, _, _ = input
             assert pred_mu.shape[1] == 1
             tv, _ = target
-            mi = isnan(pred_mu) 
+            mi = isnan(pred_mu)
             mask = isnan(tv) | mi
             valid_mu = pred_mu[~mask]
             if valid_mu.numel() == 0:
@@ -191,7 +199,7 @@ class Exp_crossformer(Exp_Basic):
                         (weights[0] + self.weight[0]) * loss_mu_part
                         + (weights[1] + self.weight[1]) * loss_huber
                         + (weights[2] + self.weight[2]) * variance_loss,
-                        min=1e-6,
+                        min=1e-8,
                     )
                 )
                 + mi.sum() / target[0].numel()
@@ -224,10 +232,8 @@ class Exp_crossformer(Exp_Basic):
         if ic[0] is None:
             ce = 0
         else:
-            ce = cross_entropy_with_nans(
-                torch.from_numpy(np.concatenate(ic)),
-                torch.from_numpy(np.concatenate(yc)),
-            )
+            ic, yc = [torch.from_numpy(np.concatenate(x)) for x in (ic, yc)]
+            ce = cross_entropy_with_nans(ic, yc).item()+10-fuzzy_accuracy(ic, tc) *10
 
         # self.model.train()
         return mse + var_abs + ce

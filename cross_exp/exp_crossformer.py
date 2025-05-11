@@ -74,7 +74,7 @@ class Exp_crossformer(Exp_Basic):
         self.loss_logits = nn.Parameter(
             torch.log(
                 torch.tensor(
-                    [args.lambda_mse, args.lambda_huber, 0.1],
+                    [args.lambda_mse, args.lambda_huber, 0.1,0.1],
                     dtype=torch.float32,
                 )
             )
@@ -157,14 +157,15 @@ class Exp_crossformer(Exp_Basic):
             )
 
         def cross_mse_loss_with_nans(input, target):
-            pred_mu, _, _ = input
+            pred_mu, pred_q90, _ = input
             assert pred_mu.shape[1] == 1
             tv, _ = target
-            mi = isnan(pred_mu)
+            mi = isnan(pred_mu) | isnan(pred_q90)
             mask = isnan(tv) | mi
             valid_mu = pred_mu[~mask]
             if valid_mu.numel() == 0:
                 return valid_mu.sum() * 0 + 1e-8
+            valid_q90 = pred_q90[~mask]
             valid_tv = tv[~mask]
             delta = torch.exp(self.log_delta)
             weights = F.softmax(self.loss_logits, dim=0) * self.weight[1] * 2
@@ -182,9 +183,17 @@ class Exp_crossformer(Exp_Basic):
             loss_mse = (
                 (1 + (self.alpha * valid_tv.abs()).clamp(0, 0.5)) * u.pow(2)
             ).mean()
+            mask_pos = valid_tv > 0.1
+            if mask_pos.sum() == 0:
+                loss_q90_pos = mask_pos.sum() * 0 + 1e-8
+            else:
+                u = valid_tv[mask_pos] - valid_q90[mask_pos]
+                loss_q90_pos = torch.mean(torch.max(tau * u, (tau - 1) * u))            
             sigma_mu = torch.exp(self.log_sigma_mu).clamp(min=1e-3, max=1e3)
+            sigma_q90 = torch.exp(self.log_sigma_q90).clamp(min=1e-3, max=1e3)
 
             loss_mu_part = loss_mse / (2 * sigma_mu**2) + torch.log(sigma_mu)
+            loss_q90_pos = loss_q90_pos / (2 * sigma_q90**2) + torch.log(sigma_q90)
             # Compute variance of predictions and targets
             variance_tv = nanstd(tv)
             variance_iv = nanstd(pred_mu)
@@ -203,6 +212,7 @@ class Exp_crossformer(Exp_Basic):
                         min=1e-8,
                     )
                 )
+                + (weights[3] + self.weight[1]) * loss_q90_pos
                 + mi.sum() / target[0].numel()
             )
 

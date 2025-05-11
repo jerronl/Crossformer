@@ -85,7 +85,7 @@ class Exp_crossformer(Exp_Basic):
         self.weight = len(self.loss_logits) * 0.1 + args.weight + 1.2
         self.weight = 1 / self.weight, 0.1 / self.weight, args.weight / self.weight
         self.alpha = 1 / 6
-        self.step=args.step
+        self.step = args.step
 
     def build_model(self, data):
         model = Crossformer(
@@ -234,7 +234,11 @@ class Exp_crossformer(Exp_Basic):
             ce = 0
         else:
             ic, yc = [torch.from_numpy(np.concatenate(x)) for x in (ic, yc)]
-            ce = cross_entropy_with_nans(ic, yc).item()+10-fuzzy_accuracy(ic, tc) *10
+            ce = (
+                cross_entropy_with_nans(ic, yc).item()
+                + 10
+                - fuzzy_accuracy(ic, tc) * 10
+            )
 
         # self.model.train()
         return mse + var_abs + ce
@@ -299,7 +303,7 @@ class Exp_crossformer(Exp_Basic):
             patience=self.args.patience,
             verbose=True,
             best_score=score,
-            step=self.step
+            step=self.step,
         )
         for epoch in range(spoch, self.args.train_epochs):
             time_now = time.time()
@@ -319,7 +323,7 @@ class Exp_crossformer(Exp_Basic):
 
                 if (i + 1) % 100 == 0:
                     print(
-                        "\titers: {0:.3f}, epoch: {1} | loss: {2:.7f}".format(
+                        "\titers: {0:.4g}, epoch: {1} | loss: {2:.4g}".format(
                             i + 1, epoch + 1, loss.item()
                         )
                     )
@@ -328,7 +332,7 @@ class Exp_crossformer(Exp_Basic):
                         (self.args.train_epochs - epoch) * train_steps - i
                     )
                     print(
-                        "\tspeed: {:.4f}s/iter; left time: {:.4f}s".format(
+                        "\tspeed: {:.4g}s/iter; left time: {:.4g}s".format(
                             speed, left_time
                         )
                     )
@@ -352,7 +356,7 @@ class Exp_crossformer(Exp_Basic):
             )
 
             print(
-                "Epoch: {0:.3f}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
+                "Epoch: {0:.3e}, Steps: {1} | Train Loss: {2:.4g} Vali Loss: {3:.4g} Test Loss: {4:.4g}".format(
                     epoch + 1, train_steps, train_loss, vali_loss, test_loss
                 )
             )
@@ -464,11 +468,11 @@ class Exp_crossformer(Exp_Basic):
             mae, mse, rmse, mape, mspe, accr = metrics_mean
             print_color(
                 94,
-                f"mae:{mae:.3f}, mse:{mse:.3f}, rmse:{rmse:.3f}, mape:{mape:.3f}, mspe:{mspe:.3f}, accr:{accr}",
+                f"mae:{mae:.3e}, mse:{mse:.3e}, rmse:{rmse:.3e}, mape:{mape:.3e}, mspe:{mspe:.3e}, accr:{accr}",
             )
 
             np.save(
-                folder_path + f"mmae{mae:.3f}, accr{accr}.npy",
+                folder_path + f"mmae{mae:.3e}, accr{accr}.npy",
                 np.array([mae, mse, rmse, mape, mspe, accr]),
             )
             # if save_pred:

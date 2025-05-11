@@ -23,7 +23,7 @@ dcs = {
     "prcs": {
         "cat": ["pmcat"],
         "y": ["cat", "opc"],
-        "ycat": 22,
+        "ycat": 20,
         "xvsp": False,
     },
 }

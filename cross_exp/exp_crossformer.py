@@ -146,7 +146,7 @@ class Exp_crossformer(Exp_Basic):
         return model_optim
 
     def _select_criterion(self, ycat):
-        tau = 0.9
+        tau = 0.7
 
         def cross_entropy_mse_loss_with_nans(input, target):
             assert input[0].shape[1] == 1
@@ -157,15 +157,14 @@ class Exp_crossformer(Exp_Basic):
             )
 
         def cross_mse_loss_with_nans(input, target):
-            pred_mu, pred_q90, _ = input
+            pred_mu, _, _ = input
             assert pred_mu.shape[1] == 1
             tv, _ = target
-            mi = isnan(pred_mu) | isnan(pred_q90)
+            mi = isnan(pred_mu)
             mask = isnan(tv) | mi
             valid_mu = pred_mu[~mask]
             if valid_mu.numel() == 0:
                 return valid_mu.sum() * 0 + 1e-8
-            valid_q90 = pred_q90[~mask]
             valid_tv = tv[~mask]
             delta = torch.exp(self.log_delta)
             weights = F.softmax(self.loss_logits, dim=0) * self.weight[1] * 2
@@ -187,10 +186,8 @@ class Exp_crossformer(Exp_Basic):
             if mask_pos.sum() == 0:
                 loss_q90_pos = mask_pos.sum() * 0 + 1e-8
             else:
-                u = valid_tv[mask_pos] - valid_q90[mask_pos]
-                loss_q90_pos = torch.mean(torch.max(tau * u, (tau - 1) * u))
                 u=  valid_tv[mask_pos] - valid_mu[mask_pos]    
-                loss_q90_pos+= torch.mean(torch.max(tau * u, (tau - 1) * u))    
+                loss_q90_pos= torch.mean(torch.max(tau * u, (tau - 1) * u))    
             sigma_mu = torch.exp(self.log_sigma_mu).clamp(min=1e-3, max=1e3)
             sigma_q90 = torch.exp(self.log_sigma_q90).clamp(min=1e-3, max=1e3)
 

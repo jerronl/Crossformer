@@ -99,11 +99,6 @@ class Crossformer(nn.Module):
             nn.ReLU(),
             nn.Linear(out_dim * 2, out_dim - ycat),
         )
-        self.adapter_q90 = nn.Sequential(
-            nn.Linear(value_dim, out_dim * 2),
-            nn.ReLU(),
-            nn.Linear(out_dim * 2, out_dim - ycat),
-        )
         self.adapter_cat = (
             nn.Sequential(
                 nn.Linear(value_dim, out_dim * 2),
@@ -172,8 +167,7 @@ class Crossformer(nn.Module):
 
         # return base + predict
         pred_mu = self.adapter_mu(dec_out)  # [B, pad_seg_num, out_dim]
-        pred_q90 = self.adapter_q90(dec_out)
-
+        
         pred_mu = base + pred_mu[:, : self.out_len, :]
         pred_q90 = base + pred_q90[:, : self.out_len, :]
 
@@ -183,4 +177,4 @@ class Crossformer(nn.Module):
             else None
         )
 
-        return pred_mu, pred_q90, pred_cat
+        return pred_mu, 0, pred_cat

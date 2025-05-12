@@ -169,8 +169,7 @@ class Crossformer(nn.Module):
         pred_mu = self.adapter_mu(dec_out)  # [B, pad_seg_num, out_dim]
         
         pred_mu = base + pred_mu[:, : self.out_len, :]
-        pred_q90 = base + pred_q90[:, : self.out_len, :]
-
+        
         pred_cat = (
             base + self.adapter_cat(dec_out)[:, : self.out_len, :]
             if self.adapter_cat

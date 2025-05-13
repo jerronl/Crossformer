@@ -194,9 +194,10 @@ class Exp_crossformer(Exp_Basic):
                 abs_u < delta, 0.5 * u**2 / delta, abs_u - 0.5 * delta
             ).mean()
             loss_mse = (
-                (1 + (self.alpha * (valid_tv + 2 * valid_tv.abs())).clamp(0, 0.5))
-                * u.pow(2)
-            ).mean()
+                ((1 + (self.alpha * (valid_tv + 2 * valid_tv.abs())).clamp(0, 0.5)) * u)
+                .pow(2)
+                .mean()
+            )
             mask_pos = valid_tv > 0.1
 
             if mask_pos.sum() == 0:
@@ -216,16 +217,14 @@ class Exp_crossformer(Exp_Basic):
             # Variance loss (maximize variance matching)
             variance_loss = (variance_iv - variance_tv).pow(2).mean()
             rel_var = (variance_tv / (1e-8 + variance_iv) - 1).pow(2).mean()
-            variance_loss += rel_var * match_lambda(variance_loss, 1)
+            variance_loss += rel_var * match_lambda(variance_tv.mean(), 1)
 
-            return (
+            loss = (
                 torch.sqrt(
                     torch.clamp(
                         (weights[0] + self.weight[0]) * loss_mu_part
                         + (weights[1] + self.weight[1]) * loss_huber
-                        + (weights[2] + self.weight[2])
-                        * variance_loss
-                        * match_lambda(loss_mu_part, variance_tv.mean()),
+                        + (weights[2] + self.weight[2]) * variance_loss,
                         min=1e-8,
                     )
                 )
@@ -272,7 +271,7 @@ class Exp_crossformer(Exp_Basic):
         var_p = np.var(pred, axis=0)
         var_abs = np.sqrt(np.mean((var_p - var_y) ** 2))
         var_rel = np.sqrt(np.mean((var_y / (var_p + 1e-8) - 1) ** 2))
-        var_all = var_abs + var_rel * match_lambda(var_abs, 1)
+        var_all = var_abs + var_rel * match_lambda(var_y.mean(), 1)
         if ic[0] is None:
             ce = 0
         else:
@@ -284,7 +283,7 @@ class Exp_crossformer(Exp_Basic):
             )
 
         # self.model.train()
-        return mse + ce + var_all * match_lambda(mse, var_y.mean())
+        return mse + ce + self.weight[2] * var_all
 
     def train(self, setting, data):
         checkpoint = data_split = None

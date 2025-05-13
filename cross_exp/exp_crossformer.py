@@ -20,14 +20,14 @@ from utils.metrics import make_metric
 warnings.filterwarnings("ignore")
 
 
-def nanstd(x: torch.Tensor, dim=0, unbiased=False):
+def nanvar(x: torch.Tensor, dim=0, unbiased=False):
     mask = ~torch.isnan(x)
     count = mask.sum(dim)
     mean = torch.nanmean(x, dim)
     diff = (x - mean).pow(2)
     diff[~mask] = 0
     var = diff.sum(dim) / (count - (1 if unbiased else 0)).clamp(min=1)
-    return torch.sqrt(var)
+    return var  # torch.sqrt(var)
 
 
 def fuzzy_accuracy(pred_logits, true_labels):
@@ -35,6 +35,20 @@ def fuzzy_accuracy(pred_logits, true_labels):
     diff = (pred_class - true_labels).abs()
     score = torch.where(diff == 0, 1.0, torch.where(diff == 1, 0.25, 0.0))
     return score.mean().item()
+
+
+import torch
+
+
+def match_lambda(
+    v1: torch.Tensor, v2: torch.Tensor, eps: float = 1e-8, base: float = 2.0
+) -> torch.Tensor:
+    v1 = torch.as_tensor(v1)
+    v2 = torch.as_tensor(v2)
+    ratio = v1.detach() / (v2.detach() + eps)
+    log_ratio = torch.log(ratio)
+    quant = torch.floor(log_ratio / base) * base
+    return torch.exp(quant)
 
 
 def cross_entropy_with_nans(ic, tc):
@@ -74,7 +88,7 @@ class Exp_crossformer(Exp_Basic):
         self.loss_logits = nn.Parameter(
             torch.log(
                 torch.tensor(
-                    [args.lambda_mse, args.lambda_huber, 0.1,0.1],
+                    [args.lambda_mse, args.lambda_huber, 0.1, 0.1],
                     dtype=torch.float32,
                 )
             )
@@ -183,32 +197,34 @@ class Exp_crossformer(Exp_Basic):
                 (1 + (self.alpha * valid_tv.abs()).clamp(0, 0.5)) * u.pow(2)
             ).mean()
             mask_pos = valid_tv > 0.1
-            
+
             if mask_pos.sum() == 0:
                 loss_q90_pos = mask_pos.sum() * 0 + 1e-8
             else:
-                u=  valid_tv[mask_pos] - valid_mu[mask_pos]    
-                loss_q90_pos= torch.mean(torch.max(tau * u, (tau - 1) * u))    
+                u = valid_tv[mask_pos] - valid_mu[mask_pos]
+                loss_q90_pos = torch.mean(torch.max(tau * u, (tau - 1) * u))
             sigma_mu = torch.exp(self.log_sigma_mu).clamp(min=1e-3, max=1e3)
             sigma_q90 = torch.exp(self.log_sigma_q90).clamp(min=1e-3, max=1e3)
 
             loss_mu_part = loss_mse / (2 * sigma_mu**2) + torch.log(sigma_mu)
             loss_q90_pos = loss_q90_pos / (2 * sigma_q90**2) + torch.log(sigma_q90)
             # Compute variance of predictions and targets
-            variance_tv = nanstd(tv)
-            variance_iv = nanstd(pred_mu)
+            variance_tv = nanvar(tv)
+            variance_iv = nanvar(pred_mu)
 
             # Variance loss (maximize variance matching)
-            variance_loss = (
-                (variance_iv - variance_tv).pow(2)
-                + (variance_tv / (1e-8 + variance_iv) - 1).pow(2) * 0.1
-            ).mean()
+            variance_loss = (variance_iv - variance_tv).pow(2).mean()
+            rel_var = (variance_tv / (1e-8 + variance_iv) - 1).pow(2).mean()
+            variance_loss += rel_var * match_lambda(variance_loss, 1)
+
             return (
                 torch.sqrt(
                     torch.clamp(
                         (weights[0] + self.weight[0]) * loss_mu_part
                         + (weights[1] + self.weight[1]) * loss_huber
-                        + (weights[2] + self.weight[2]) * variance_loss,
+                        + (weights[2] + self.weight[2])
+                        * variance_loss
+                        * match_lambda(loss_mu_part, variance_tv.mean()),
                         min=1e-8,
                     )
                 )
@@ -238,8 +254,9 @@ class Exp_crossformer(Exp_Basic):
 
         var_y = np.var(y, axis=0)
         var_p = np.var(pred, axis=0)
-        var_abs = np.mean((var_p - var_y) ** 2)
-        var_rel = np.mean((var_y / (var_p + 1e-8) - 1) ** 2)
+        var_abs = np.sqrt(np.mean((var_p - var_y) ** 2))
+        var_rel = np.sqrt(np.mean((var_y / (var_p + 1e-8) - 1) ** 2))
+        var_all = var_abs + var_rel * match_lambda(var_abs, 1)
         if ic[0] is None:
             ce = 0
         else:
@@ -251,7 +268,7 @@ class Exp_crossformer(Exp_Basic):
             )
 
         # self.model.train()
-        return mse + var_abs + ce +var_rel*0.1
+        return mse + ce + var_all * match_lambda(mse, var_y.mean())
 
     def train(self, setting, data):
         checkpoint = data_split = None

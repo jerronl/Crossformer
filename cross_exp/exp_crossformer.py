@@ -194,7 +194,8 @@ class Exp_crossformer(Exp_Basic):
                 abs_u < delta, 0.5 * u**2 / delta, abs_u - 0.5 * delta
             ).mean()
             loss_mse = (
-                (1 + (self.alpha * valid_tv.abs()).clamp(0, 0.5)) * u.pow(2)
+                (1 + (self.alpha * (valid_tv + 2 * valid_tv.abs())).clamp(0, 0.5))
+                * u.pow(2)
             ).mean()
             mask_pos = valid_tv > 0.1
 
@@ -231,6 +232,19 @@ class Exp_crossformer(Exp_Basic):
                 + (weights[3] + self.weight[1]) * loss_q90_pos
                 + mi.sum() / target[0].numel()
             )
+            if isnan(loss):
+                print_color(
+                    91,
+                    "nan",
+                    loss_mu_part,
+                    loss_huber,
+                    loss_q90_pos,
+                    rel_var,
+                    variance_loss,
+                    variance_tv,
+                )
+
+            return loss
 
         return (
             cross_entropy_mse_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans
@@ -250,7 +264,9 @@ class Exp_crossformer(Exp_Basic):
                 yc.append(tc)
         pred = np.concatenate(pred)
         y = np.concatenate(y)
-        mse = np.mean((1 + np.minimum(self.alpha * np.abs(y), 0.5)) * (pred - y) ** 2)
+        mse = np.mean(
+            (1 + np.minimum(self.alpha * (y + 2 * np.abs(y)), 0.5)) * (pred - y) ** 2
+        )
 
         var_y = np.var(y, axis=0)
         var_p = np.var(pred, axis=0)
@@ -345,8 +361,8 @@ class Exp_crossformer(Exp_Basic):
                 model_optim.zero_grad()
                 pred, true = self._process_one_batch(train_data, batch_x, batch_y)
                 loss = criterion(pred, true)
-                assert ~isnan(loss)
-                train_loss.append(loss.item())
+                if ~isnan(loss):
+                    train_loss.append(loss.item())
 
                 if (i + 1) % 100 == 0:
                     print(
@@ -366,8 +382,9 @@ class Exp_crossformer(Exp_Basic):
                     iter_count = 0
                     time_now = time.time()
 
-                loss.backward()
-                model_optim.step()
+                if ~isnan(loss):
+                    loss.backward()
+                    model_optim.step()
 
             print(
                 "Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time),

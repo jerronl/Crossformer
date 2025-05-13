@@ -74,7 +74,7 @@ class Exp_crossformer(Exp_Basic):
         self.loss_logits = nn.Parameter(
             torch.log(
                 torch.tensor(
-                    [args.lambda_mse, args.lambda_huber, 0.1,0.1],
+                    [args.lambda_mse, args.lambda_huber, 0.1, 0.1],
                     dtype=torch.float32,
                 )
             )
@@ -182,12 +182,21 @@ class Exp_crossformer(Exp_Basic):
             loss_mse = (
                 (1 + (self.alpha * valid_tv.abs()).clamp(0, 0.5)) * u.pow(2)
             ).mean()
-            mask_pos = valid_tv > 0.1
-            if mask_pos.sum() == 0:
-                loss_q90_pos = mask_pos.sum() * 0 + 1e-8
-            else:
-                u=  valid_tv[mask_pos] - valid_mu[mask_pos]    
-                loss_q90_pos= torch.mean(torch.max(tau * u, (tau - 1) * u))    
+            mask_pos = (tv < 0.1) | mask
+            tv_pos = tv.clone()
+            mu_pos = pred_mu.clone()
+            tv_pos[mask_pos] = float("nan")
+            mu_pos[mask_pos] = float("nan")
+            counts = (~mask_pos).sum(dim=0)  # (C,)
+
+            small_cols = counts < 5
+            tv_pos[:, small_cols] = float("nan")
+            mu_pos[:, small_cols] = float("nan")
+
+            std_tv_pos = nanstd(tv_pos, dim=0)  # (C,)
+            std_mu_pos = nanstd(mu_pos, dim=0)  # (C,)
+            u = torch.nan_to_num(std_tv_pos - std_mu_pos)
+            loss_q90_pos = torch.mean(torch.max(tau * u, (tau - 1) * u))
             sigma_mu = torch.exp(self.log_sigma_mu).clamp(min=1e-3, max=1e3)
             sigma_q90 = torch.exp(self.log_sigma_q90).clamp(min=1e-3, max=1e3)
 

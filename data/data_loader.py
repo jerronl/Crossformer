@@ -117,7 +117,6 @@ class MixedStandardScaler(BaseEstimator, TransformerMixin):
         return np.concatenate([X_front_scaled, X_rest_scaled], axis=-1)
 
     def inverse_transform(self, X_scaled):
-        X_scaled = np.asarray(X_scaled)
         if X_scaled.shape[-1] != self.n_features:
             raise ValueError(
                 f"Expected {self.n_features} features, got {X_scaled.shape[-1]}."
@@ -359,13 +358,15 @@ class DatasetMTS(Dataset):
     def __len__(self):
         return self.shape[0]
 
-    def inverse_transform(self, data):
+    def inverse_transform(self, data, inverse):
         if len(data) > 2:
             iv, sc, ic = data
             if ic is not None:
-                ic = F.softmax(ic.cpu(), 2)
+                ic = F.softmax(ic.detach().cpu(), 2)
         else:
             iv, sc = data
-            sc = sc.cpu()
-        dt = self.scaler[-1].inverse_transform(iv.cpu())
+            sc = sc.detach().cpu()
+        dt = iv.detach().cpu().numpy()
+        if inverse:
+            self.scaler[-1].inverse_transform(dt)
         return (dt, sc, ic) if len(data) > 2 else (dt, sc)

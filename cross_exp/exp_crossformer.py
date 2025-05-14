@@ -52,32 +52,24 @@ def match_lambda(
 
 
 def cross_entropy_with_nans(ic, tc):
-    # ic: (B, 1, C), tc: (B,)
-    mc = ~torch.isnan(ic).any(dim=2).squeeze(1)  # mask of valid samples
-    if mc.sum() == 0:
-        return mc.sum() * 0 + 1e-8
-    else:
-        # valid indices
-        tc_valid = tc[mc]  # (valid,)
-        log_probs_valid = F.log_softmax(ic[mc][:, 0, :], dim=-1)  # (valid, C)
+    B, _, C = ic.size()
+    device = ic.device
 
-        # exact match
-        exact_loss = -log_probs_valid[
-            torch.arange(log_probs_valid.size(0)), tc_valid
-        ].mean()
+    valid_mask = ~torch.isnan(ic).any(dim=2).squeeze(1)  # (B,)
 
-        # adjacent categories
-        num_classes = ic.size(-1)
-        adjacents = [torch.clamp(tc_valid + i, 0, num_classes - 1) for i in [1, -1]]
+    p = torch.zeros((B, C), device=device)
+    if valid_mask.any():
+        logits_valid = ic[valid_mask, 0, :]  # (B_valid, C)
+        p_valid = F.softmax(logits_valid, dim=1)  # (B_valid, C)
+        p[valid_mask] = p_valid
 
-        adjacent_losses = [
-            -log_probs_valid[torch.arange(log_probs_valid.size(0)), adj].mean()
-            for adj in adjacents
-        ]
-        total_loss = exact_loss + sum(adjacent_losses) / (4.0 * len(adjacent_losses))
+    cdf_p = torch.cumsum(p, dim=1)  # (B, C)
 
-    # Add penalty for missing samples
-    return total_loss + (~mc).sum() / tc.numel()
+    one_hot = F.one_hot(tc, C).float().to(device)  # (B, C)
+    cdf_t = torch.cumsum(one_hot, dim=1)  # (B, C)
+    per_sample_loss = torch.abs(cdf_p - cdf_t).mean(dim=1)  # (B,)
+    per_sample_loss[~valid_mask] = 1.0
+    return per_sample_loss.mean()
 
 
 class Exp_crossformer(Exp_Basic):
@@ -255,7 +247,7 @@ class Exp_crossformer(Exp_Basic):
         with torch.no_grad():
             for i, (batch_x, batch_y) in enumerate(vali_loader):
                 (pv, _, pc), (tv, tc) = self._process_one_batch(
-                    vali_data, batch_x, batch_y, inverse=True
+                    vali_data, batch_x, batch_y, inverse=self.ycat + 1
                 )
                 pred.append(pv)
                 ic.append(pc)
@@ -276,11 +268,7 @@ class Exp_crossformer(Exp_Basic):
             ce = 0
         else:
             ic, yc = [torch.from_numpy(np.concatenate(x)) for x in (ic, yc)]
-            ce = (
-                cross_entropy_with_nans(ic, yc).item()
-                + 10
-                - fuzzy_accuracy(ic, tc) * 10
-            )
+            ce = cross_entropy_with_nans(ic, yc).item() + 1 - fuzzy_accuracy(ic, tc)
 
         # self.model.train()
         return mse + ce + self.weight[2] * var_all
@@ -541,10 +529,10 @@ class Exp_crossformer(Exp_Basic):
         outputs = self.model(batch_x)
 
         if inverse:
-            return self._inverse(dataset_object, outputs, batch_y)
+            return self._inverse(dataset_object, outputs, batch_y, inverse < 1)
         return outputs, batch_y
 
-    def _inverse(self, dataset_object, outputs, batch_y):
-        outputs = dataset_object.inverse_transform(outputs)
-        batch_y = dataset_object.inverse_transform(batch_y)
+    def _inverse(self, dataset_object, outputs, batch_y, inverse):
+        outputs = dataset_object.inverse_transform(outputs, inverse)
+        batch_y = dataset_object.inverse_transform(batch_y, inverse)
         return outputs, batch_y

@@ -368,5 +368,5 @@ class DatasetMTS(Dataset):
             sc = sc.detach().cpu()
         dt = iv.detach().cpu().numpy()
         if inverse:
-            self.scaler[-1].inverse_transform(dt)
+            dt=self.scaler[-1].inverse_transform(dt)
         return (dt, sc, ic) if len(data) > 2 else (dt, sc)

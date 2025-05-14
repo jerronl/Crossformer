@@ -529,7 +529,7 @@ class Exp_crossformer(Exp_Basic):
         outputs = self.model(batch_x)
 
         if inverse:
-            return self._inverse(dataset_object, outputs, batch_y, inverse < 1)
+            return self._inverse(dataset_object, outputs, batch_y, inverse < 2)
         return outputs, batch_y
 
     def _inverse(self, dataset_object, outputs, batch_y, inverse):

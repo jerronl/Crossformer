@@ -52,24 +52,32 @@ def match_lambda(
 
 
 def cross_entropy_with_nans(ic, tc):
-    B, _, C = ic.size()
-    device = ic.device
+    mc = torch.isnan(ic).any(dim=2).squeeze(1)  # mask of valid samples
+    imc=~mc
+    if imc.sum() == 0:
+        total_loss=0
+    else:
+        # valid indices
+        tc_valid = tc[imc]  # (valid,)
+        log_probs_valid = F.log_softmax(ic[imc][:, 0, :], dim=-1)  # (valid, C)
 
-    valid_mask = ~torch.isnan(ic).any(dim=2).squeeze(1)  # (B,)
+        # exact match
+        exact_loss = -log_probs_valid[
+            torch.arange(log_probs_valid.size(0)), tc_valid
+        ].mean()
 
-    p = torch.zeros((B, C), device=device)
-    if valid_mask.any():
-        logits_valid = ic[valid_mask, 0, :]  # (B_valid, C)
-        p_valid = F.softmax(logits_valid, dim=1)  # (B_valid, C)
-        p[valid_mask] = p_valid
+        # adjacent categories
+        num_classes = ic.size(-1)
+        adjacents = [torch.clamp(tc_valid + i, 0, num_classes - 1) for i in [1, -1]]
 
-    cdf_p = torch.cumsum(p, dim=1)  # (B, C)
+        adjacent_losses = [
+            -log_probs_valid[torch.arange(log_probs_valid.size(0)), adj].mean()
+            for adj in adjacents
+        ]
+        total_loss = exact_loss + sum(adjacent_losses) / (4.0 * len(adjacent_losses))
 
-    one_hot = F.one_hot(tc, C).float().to(device)  # (B, C)
-    cdf_t = torch.cumsum(one_hot, dim=1)  # (B, C)
-    per_sample_loss = torch.abs(cdf_p - cdf_t).mean(dim=1)  # (B,)
-    per_sample_loss[~valid_mask] = 1.0
-    return per_sample_loss.mean()
+    # Add penalty for missing samples
+    return (total_loss + mc.sum() )/ tc.numel()
 
 
 class Exp_crossformer(Exp_Basic):
@@ -90,7 +98,7 @@ class Exp_crossformer(Exp_Basic):
         self.log_delta = nn.Parameter(torch.log(torch.tensor(args.delta)))
         self.weight = len(self.loss_logits) * 0.1 + args.weight + 1.2
         self.weight = 1 / self.weight, 0.1 / self.weight, args.weight / self.weight
-        self.alpha = 1 / 6
+        self.alpha = 1 / 8
         self.step = args.step
 
     def build_model(self, data):
@@ -186,7 +194,7 @@ class Exp_crossformer(Exp_Basic):
                 abs_u < delta, 0.5 * u**2 / delta, abs_u - 0.5 * delta
             ).mean()
             loss_mse = (
-                ((1 + (self.alpha * (valid_tv + 2 * valid_tv.abs())).clamp(0, 0.5)) * u)
+                ((1 + (self.alpha * (valid_tv + 2 * valid_tv.abs())).clamp(0, 0.8)) * u)
                 .pow(2)
                 .mean()
             )
@@ -256,7 +264,7 @@ class Exp_crossformer(Exp_Basic):
         pred = np.concatenate(pred)
         y = np.concatenate(y)
         mse = np.mean(
-            (1 + np.minimum(self.alpha * (y + 2 * np.abs(y)), 0.5)) * (pred - y) ** 2
+            (1 + np.minimum(self.alpha * (y + 2 * np.abs(y)), 0.8)) * (pred - y) ** 2
         )
 
         var_y = np.var(y, axis=0)
@@ -387,7 +395,7 @@ class Exp_crossformer(Exp_Basic):
             )
 
             print(
-                "Epoch: {0:.3e}, Steps: {1} | Train Loss: {2:.4g} Vali Loss: {3:.4g} Test Loss: {4:.4g}".format(
+                "Epoch: {0}, Steps: {1} | Train Loss: {2:.4g} Vali Loss: {3:.4g} Test Loss: {4:.4g}".format(
                     epoch + 1, train_steps, train_loss, vali_loss, test_loss
                 )
             )
@@ -499,11 +507,11 @@ class Exp_crossformer(Exp_Basic):
             mae, mse, rmse, mape, mspe, accr = metrics_mean
             print_color(
                 94,
-                f"mae:{mae:.3e}, mse:{mse:.3e}, rmse:{rmse:.3e}, mape:{mape:.3e}, mspe:{mspe:.3e}, accr:{accr}",
+                f"mae:{mae:.4g}, mse:{mse:.4g}, rmse:{rmse:.4g}, mape:{mape:.4g}, mspe:{mspe:.4g}, accr:{accr}",
             )
 
             np.save(
-                folder_path + f"mmae{mae:.3e}, accr{accr}.npy",
+                folder_path + f"mmae{mae:.4g}, accr{accr}.npy",
                 np.array([mae, mse, rmse, mape, mspe, accr]),
             )
             # if save_pred:

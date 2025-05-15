@@ -51,33 +51,32 @@ def match_lambda(
     return torch.exp(quant)
 
 
+def make_discrete_laplace_softlabel(tc_valid, num_classes, lam=1.5):
+    idx = torch.arange(num_classes, device=tc_valid.device).unsqueeze(0)  # (1, C)
+    center = tc_valid.unsqueeze(1).float()  # (B, 1)
+
+    dist = torch.abs(idx - center)  # (B, C)
+    weights = torch.exp(-lam * dist)  # (B, C)
+    weights /= weights.sum(dim=1, keepdim=True)  # Normalize per sample
+    return weights
+
+
 def cross_entropy_with_nans(ic, tc):
-    mc = torch.isnan(ic).any(dim=2).squeeze(1)  # mask of valid samples
-    imc=~mc
+    mc = torch.isnan(ic).any(dim=2).squeeze(1)  # mask for invalid
+    imc = ~mc
     if imc.sum() == 0:
-        total_loss=0
+        total_loss = 0
     else:
-        # valid indices
+        num_classes = ic.size(-1)
         tc_valid = tc[imc]  # (valid,)
         log_probs_valid = F.log_softmax(ic[imc][:, 0, :], dim=-1)  # (valid, C)
 
-        # exact match
-        exact_loss = -log_probs_valid[
-            torch.arange(log_probs_valid.size(0)), tc_valid
-        ].mean()
+        soft_labels = make_discrete_laplace_softlabel(tc_valid, num_classes)
 
-        # adjacent categories
-        num_classes = ic.size(-1)
-        adjacents = [torch.clamp(tc_valid + i, 0, num_classes - 1) for i in [1, -1]]
+        # Soft label cross entropy
+        total_loss = -(soft_labels * log_probs_valid).sum(dim=1).mean()
 
-        adjacent_losses = [
-            -log_probs_valid[torch.arange(log_probs_valid.size(0)), adj].mean()
-            for adj in adjacents
-        ]
-        total_loss = exact_loss + sum(adjacent_losses) / (4.0 * len(adjacent_losses))
-
-    # Add penalty for missing samples
-    return (total_loss + mc.sum() )/ tc.numel()
+    return (total_loss + mc.sum()) / tc.numel()
 
 
 class Exp_crossformer(Exp_Basic):
@@ -100,6 +99,7 @@ class Exp_crossformer(Exp_Basic):
         self.weight = 1 / self.weight, 0.1 / self.weight, args.weight / self.weight
         self.alpha = 1 / 8
         self.step = args.step
+        self.args = args
 
     def build_model(self, data):
         model = Crossformer(
@@ -178,7 +178,7 @@ class Exp_crossformer(Exp_Basic):
             mask = isnan(tv) | mi
             valid_mu = pred_mu[~mask]
             if valid_mu.numel() == 0:
-                return valid_mu.sum() * 0 + 1e-8
+                return mi.sum() / target[0].numel() + 1e-8
             valid_tv = tv[~mask]
             delta = torch.exp(self.log_delta)
             weights = F.softmax(self.loss_logits, dim=0) * self.weight[1] * 2
@@ -263,9 +263,6 @@ class Exp_crossformer(Exp_Basic):
                 yc.append(tc)
         pred = np.concatenate(pred)
         y = np.concatenate(y)
-        mse = np.mean(
-            (1 + np.minimum(self.alpha * (y + 2 * np.abs(y)), 0.8)) * (pred - y) ** 2
-        )
 
         var_y = np.var(y, axis=0)
         var_p = np.var(pred, axis=0)
@@ -273,13 +270,22 @@ class Exp_crossformer(Exp_Basic):
         var_rel = np.sqrt(np.mean((var_y / (var_p + 1e-8) - 1) ** 2))
         var_all = var_abs + var_rel * match_lambda(var_y.mean(), 1)
         if ic[0] is None:
-            ce = 0
+            mask_pos = (y > 0).squeeze()
+            under_err = np.minimum(y - pred, 0).squeeze()[mask_pos]
+            pos_beta = 0.5
+            ce = np.mean(under_err**2) * pos_beta if under_err.size else 0.0
+            mse = np.mean(
+                (1 + np.minimum(self.alpha * (y + 2 * np.abs(y)), 0.8))
+                * (pred - y) ** 2
+            )
+
         else:
             ic, yc = [torch.from_numpy(np.concatenate(x)) for x in (ic, yc)]
             ce = cross_entropy_with_nans(ic, yc).item() + 1 - fuzzy_accuracy(ic, tc)
+            mse = np.mean((pred - y) ** 2)
 
         # self.model.train()
-        return mse + ce + self.weight[2] * var_all
+        return mse + ce * 10 + self.args.weight * var_all
 
     def train(self, setting, data):
         checkpoint = data_split = None

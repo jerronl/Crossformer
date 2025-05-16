@@ -29,6 +29,10 @@ def nanvar(x: torch.Tensor, dim=0, unbiased=False):
     var = diff.sum(dim) / (count - (1 if unbiased else 0)).clamp(min=1)
     return var  # torch.sqrt(var)
 
+def nanstd(x: torch.Tensor, dim=0, unbiased=False):    
+    var = nanvar(x,dim,unbiased)
+    return torch.sqrt(var)
+
 
 def fuzzy_accuracy(pred_logits, true_labels):
     pred_class = pred_logits.argmax(dim=-1)
@@ -62,6 +66,35 @@ def make_discrete_laplace_softlabel(tc_valid, num_classes, lam=1.5):
 
 
 def cross_entropy_with_nans(ic, tc):
+    mc = torch.isnan(ic).any(dim=2).squeeze(1)  # mask for invalid
+    imc = ~mc
+    if imc.sum() == 0:
+        total_loss = 0
+    else:
+        # valid indices
+        tc_valid = tc[imc]  # (valid,)
+        log_probs_valid = F.log_softmax(ic[imc][:, 0, :], dim=-1)  # (valid, C)
+
+        # exact match
+        exact_loss = -log_probs_valid[
+            torch.arange(log_probs_valid.size(0)), tc_valid
+        ].mean()
+
+        # adjacent categories
+        num_classes = ic.size(-1)
+        adjacents = [torch.clamp(tc_valid + i, 0, num_classes - 1) for i in [1, -1]]
+
+        adjacent_losses = [
+            -log_probs_valid[torch.arange(log_probs_valid.size(0)), adj].mean()
+            for adj in adjacents
+        ]
+        total_loss = exact_loss + sum(adjacent_losses) / (4.0 * len(adjacent_losses))
+
+    # Add penalty for missing samples
+    return total_loss + (mc).sum() / tc.numel()
+
+
+def cross_lap_entropy_with_nans(ic, tc):
     mc = torch.isnan(ic).any(dim=2).squeeze(1)  # mask for invalid
     imc = ~mc
     if imc.sum() == 0:
@@ -166,7 +199,7 @@ class Exp_crossformer(Exp_Basic):
             assert input[0].shape[1] == 1
             _, tc = target
             _, _, ic = input
-            return cross_entropy_with_nans(ic, tc) + cross_mse_loss_with_nans(
+            return cross_lap_entropy_with_nans(ic, tc) + cross_mse_loss_with_nans(
                 input, target
             )
 
@@ -266,29 +299,24 @@ class Exp_crossformer(Exp_Basic):
                 yc.append(tc)
         pred = np.concatenate(pred)
         y = np.concatenate(y)
+        mse = np.mean((1 + np.minimum(self.alpha * np.abs(y), 0.5)) * (pred - y) ** 2)
 
-        var_y = np.var(y, axis=0)
-        var_p = np.var(pred, axis=0)
-        var_abs = np.sqrt(np.mean((var_p - var_y) ** 2))
-        # var_rel = np.sqrt(np.mean((var_y / (var_p + 1e-8) - 1) ** 2))
-        var_all = var_abs #+ var_rel * match_lambda(var_y.mean(), 1)
+        var_y = np.std(y, axis=0)
+        var_p = np.std(pred, axis=0)
+        var_abs = np.mean((var_p - var_y) ** 2)
+        # var_rel = np.mean((var_y / (var_p + 1e-8) - 1) ** 2)
         if ic[0] is None:
-            # mask_pos = (y > 0).squeeze()
-            # under_err = np.minimum(y - pred, 0).squeeze()[mask_pos]
-            # pos_beta = 0.5
-            ce = 0#np.mean(under_err**2) * pos_beta if under_err.size else 0.0
-            mse = np.mean(
-                (1 + np.minimum(self.alpha * (y + 2 * np.abs(y)), 0.8))
-                * (pred - y) ** 2
-            )
-
+            ce = 0
         else:
             ic, yc = [torch.from_numpy(np.concatenate(x)) for x in (ic, yc)]
-            ce = cross_entropy_with_nans(ic, yc).item() + 1 - fuzzy_accuracy(ic, tc)
-            mse = np.mean((pred - y) ** 2)
+            ce = (
+                cross_entropy_with_nans(ic, yc).item()
+                + 10
+                - fuzzy_accuracy(ic, tc) * 10
+            )
 
         # self.model.train()
-        return mse + ce * 10 + self.args.weight * var_all
+        return mse + ce * 10 + self.args.weight * var_abs
 
     def train(self, setting, data):
         checkpoint = data_split = None

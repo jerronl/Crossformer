@@ -193,23 +193,26 @@ class Exp_crossformer(Exp_Basic):
             loss_huber = torch.where(
                 abs_u < delta, 0.5 * u**2 / delta, abs_u - 0.5 * delta
             ).mean()
-            loss_mse = (
-                ((1 + (self.alpha * (valid_tv + 2 * valid_tv.abs())).clamp(0, 0.8)) * u)
-                .pow(2)
-                .mean()
-            )
-            mask_pos = valid_tv > 0.1
+            if self.ycat<1:
+                loss_mse = (
+                    ((1 + (self.alpha * (valid_tv + 2 * valid_tv.abs())).clamp(0, 0.8)) * u)
+                    .pow(2)
+                    .mean()
+                )
+                mask_pos = valid_tv > 0.1
 
-            if mask_pos.sum() == 0:
-                loss_q90_pos = mask_pos.sum() * 0 + 1e-8
+                if mask_pos.sum() == 0:
+                    loss_q90_pos = mask_pos.sum() * 0 + 1e-8
+                else:
+                    u = valid_tv[mask_pos] - valid_mu[mask_pos]
+                    loss_q90_pos = torch.mean(torch.max(tau * u, (tau - 1) * u))
+                    sigma_q90 = torch.exp(self.log_sigma_q90).clamp(min=1e-3, max=1e3)
+                    loss_q90_pos = loss_q90_pos / (2 * sigma_q90**2) + torch.log(sigma_q90)
             else:
-                u = valid_tv[mask_pos] - valid_mu[mask_pos]
-                loss_q90_pos = torch.mean(torch.max(tau * u, (tau - 1) * u))
+                loss_mse=u.pow(2).mean()
+                loss_q90_pos = loss_mse * 0 + 1e-8
             sigma_mu = torch.exp(self.log_sigma_mu).clamp(min=1e-3, max=1e3)
-            sigma_q90 = torch.exp(self.log_sigma_q90).clamp(min=1e-3, max=1e3)
-
             loss_mu_part = loss_mse / (2 * sigma_mu**2) + torch.log(sigma_mu)
-            loss_q90_pos = loss_q90_pos / (2 * sigma_q90**2) + torch.log(sigma_q90)
             # Compute variance of predictions and targets
             variance_tv = nanvar(tv)
             variance_iv = nanvar(pred_mu)
@@ -267,13 +270,13 @@ class Exp_crossformer(Exp_Basic):
         var_y = np.var(y, axis=0)
         var_p = np.var(pred, axis=0)
         var_abs = np.sqrt(np.mean((var_p - var_y) ** 2))
-        var_rel = np.sqrt(np.mean((var_y / (var_p + 1e-8) - 1) ** 2))
-        var_all = var_abs + var_rel * match_lambda(var_y.mean(), 1)
+        # var_rel = np.sqrt(np.mean((var_y / (var_p + 1e-8) - 1) ** 2))
+        var_all = var_abs #+ var_rel * match_lambda(var_y.mean(), 1)
         if ic[0] is None:
-            mask_pos = (y > 0).squeeze()
-            under_err = np.minimum(y - pred, 0).squeeze()[mask_pos]
-            pos_beta = 0.5
-            ce = np.mean(under_err**2) * pos_beta if under_err.size else 0.0
+            # mask_pos = (y > 0).squeeze()
+            # under_err = np.minimum(y - pred, 0).squeeze()[mask_pos]
+            # pos_beta = 0.5
+            ce = 0#np.mean(under_err**2) * pos_beta if under_err.size else 0.0
             mse = np.mean(
                 (1 + np.minimum(self.alpha * (y + 2 * np.abs(y)), 0.8))
                 * (pred - y) ** 2

@@ -29,8 +29,9 @@ def nanvar(x: torch.Tensor, dim=0, unbiased=False):
     var = diff.sum(dim) / (count - (1 if unbiased else 0)).clamp(min=1)
     return var  # torch.sqrt(var)
 
-def nanstd(x: torch.Tensor, dim=0, unbiased=False):    
-    var = nanvar(x,dim,unbiased)
+
+def nanstd(x: torch.Tensor, dim=0, unbiased=False):
+    var = nanvar(x, dim, unbiased)
     return torch.sqrt(var)
 
 
@@ -226,9 +227,17 @@ class Exp_crossformer(Exp_Basic):
             loss_huber = torch.where(
                 abs_u < delta, 0.5 * u**2 / delta, abs_u - 0.5 * delta
             ).mean()
-            if self.ycat<1:
+            if self.ycat < 1:
                 loss_mse = (
-                    ((1 + (self.alpha * (valid_tv + 2 * valid_tv.abs())).clamp(0, 0.8)) * u)
+                    (
+                        (
+                            1
+                            + (self.alpha * (valid_tv + 2 * valid_tv.abs())).clamp(
+                                0, 0.8
+                            )
+                        )
+                        * u
+                    )
                     .pow(2)
                     .mean()
                 )
@@ -240,9 +249,11 @@ class Exp_crossformer(Exp_Basic):
                     u = valid_tv[mask_pos] - valid_mu[mask_pos]
                     loss_q90_pos = torch.mean(torch.max(tau * u, (tau - 1) * u))
                     sigma_q90 = torch.exp(self.log_sigma_q90).clamp(min=1e-3, max=1e3)
-                    loss_q90_pos = loss_q90_pos / (2 * sigma_q90**2) + torch.log(sigma_q90)
+                    loss_q90_pos = loss_q90_pos / (2 * sigma_q90**2) + torch.log(
+                        sigma_q90
+                    )
             else:
-                loss_mse=u.pow(2).mean()
+                loss_mse = u.pow(2).mean()
                 loss_q90_pos = loss_mse * 0 + 1e-8
             sigma_mu = torch.exp(self.log_sigma_mu).clamp(min=1e-3, max=1e3)
             loss_mu_part = loss_mse / (2 * sigma_mu**2) + torch.log(sigma_mu)
@@ -316,7 +327,7 @@ class Exp_crossformer(Exp_Basic):
             )
 
         # self.model.train()
-        return mse + ce * 10 + self.args.weight * var_abs
+        return mse + ce + self.args.weight * var_abs
 
     def train(self, setting, data):
         checkpoint = data_split = None
@@ -451,9 +462,7 @@ class Exp_crossformer(Exp_Basic):
                 print_color(95, "Early stopping")
                 break
 
-            if early_stopping.counter > 1 and early_stopping.adjust_learning_rate(
-                model_optim
-            ):
+            if early_stopping.adjust_learning_rate(model_optim):
                 best_model_path = path + "/" + "checkpoint.pth"
                 checkpoint = list(torch.load(best_model_path, weights_only=False))
                 self.load_state_dict(checkpoint[0][0])

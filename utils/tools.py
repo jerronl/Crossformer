@@ -21,30 +21,17 @@ class EarlyStopping:
         self.early_stop = False
         self.val_loss_min = best_score or np.inf
         self.delta = delta
-        self.epoch = 0
-        if lradj == "type1":
-            self.lr_adjust = {
-                2: learning_rate * 0.5**1,
-                4: learning_rate * 0.5**2,
-                6: learning_rate * 0.5**3,
-                8: learning_rate * 0.5**4,
-                10: learning_rate * 0.5**5,
-            }
-        elif lradj == "type2":
-            self.lr_adjust = {
-                5: learning_rate * 0.5**1,
-                10: learning_rate * 0.5**2,
-                15: learning_rate * 0.5**3,
-                20: learning_rate * 0.5**4,
-                25: learning_rate * 0.5**5,
-            }
-        else:
-            self.lr_adjust = {}
-        if step > 1:
-            self.lr_adjust = {k * step: v for k, v in self.lr_adjust.items()}
+        self.step = step
+        self.steps = 0
+        self.stage = 0
+        self.stages = 4
+        self.threshold = {"type1": 2, "type2": 5}[lradj]
+        self.lr_adjust = [learning_rate * 0.5**i for i in range(self.stages + 1)]
+        self.prev_val = float("inf")
 
     def __call__(self, val_loss, model, path):
         score = val_loss
+        self.adj = False
         if (
             score is None
             or np.isnan(score)
@@ -53,20 +40,28 @@ class EarlyStopping:
         ):
             self.counter += 1
             print(
-                f"EarlyStopping counter: {self.counter} out of {self.patience} score {score} best {self.best_score}"
+                f"EarlyStopping counter: {self.counter} out of {self.patience} score {score:.4g} best {self.best_score:.4g}"
             )
             if self.counter >= self.patience:
                 self.early_stop = True
+            else:
+                if self.stage < self.stages and val_loss > self.prev_val:
+                    self.steps += self.step
+                    if self.steps >= self.threshold:
+                        self.steps = 0
+                        self.stage += 1
+                        self.adj = True
+                else:
+                    self.prev_val = val_loss
         else:
             self.best_score = score
             self.save_checkpoint(val_loss, model, path)
             self.counter = 0
+            self.steps = 0
 
     def adjust_learning_rate(self, optimizer):
-
-        self.epoch += 1
-        if self.epoch in self.lr_adjust.keys():
-            lr = self.lr_adjust[self.epoch]
+        if self.adj:
+            lr = self.lr_adjust[self.stage]
             for param_group in optimizer.param_groups:
                 param_group["lr"] = lr
             print_color(94, f"Updating learning rate to {lr}")

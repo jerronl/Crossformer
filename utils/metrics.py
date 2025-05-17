@@ -1,6 +1,7 @@
 import numpy as np
 from sklearn.metrics import log_loss
 
+
 def RSE(pred, true):
     return np.sqrt(np.sum((true - pred) ** 2)) / np.sqrt(
         np.sum((true - true.mean()) ** 2)
@@ -29,18 +30,24 @@ def MAPE(pred, true):
     return np.mean(np.abs((pred - true) / true))
 
 
-def MSPE(pred, true):
-    return np.mean(np.square((pred - true) / true))
+def MSPE(pred, true, alpha):
+    return np.mean((1 + np.minimum(alpha * np.abs(true), 0.8)) * (pred - true) ** 2)
 
 
-def make_metric(ycat):
+def make_metric(alpha):
     def metric_cat(iv, tv, ic, tc):
         mae = MAE(iv, tv)
         mse = MSE(iv, tv)
         rmse = RMSE(iv, tv)
         mape = MAPE(iv, tv)
-        mspe = MSPE(iv, tv)
-        accr = -1 if ic is None else log_loss(np.eye(ic.shape[-1])[tc.flatten()], ic.reshape(-1,ic.shape[-1]))
+        mspe = MSPE(iv, tv, alpha)
+        accr = (
+            -1
+            if ic is None
+            else log_loss(
+                np.eye(ic.shape[-1])[tc.flatten()], ic.reshape(-1, ic.shape[-1])
+            )
+        )
 
         return mae, mse, rmse, mape, mspe, accr
 

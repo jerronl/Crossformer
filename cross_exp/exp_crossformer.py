@@ -14,7 +14,7 @@ from torch.nn import DataParallel
 from data.data_loader import DatasetMTS
 from cross_exp.exp_basic import Exp_Basic
 from cross_models.cross_former import Crossformer
-from utils.tools import EarlyStopping, print_color
+from utils.tools import EarlyStopping, print_color, format_nested
 from utils.metrics import make_metric
 
 warnings.filterwarnings("ignore")
@@ -310,7 +310,9 @@ class Exp_crossformer(Exp_Basic):
                 yc.append(tc)
         pred = np.concatenate(pred)
         y = np.concatenate(y)
-        mse = np.mean((1 + np.minimum(self.alpha * np.abs(y), 0.5)) * (pred - y) ** 2)
+        mse = np.mean(
+            (1 + np.minimum(self.args.alpha2 * np.abs(y), 0.8)) * (pred - y) ** 2
+        )
 
         var_y = np.std(y, axis=0)
         var_p = np.std(pred, axis=0)
@@ -327,7 +329,7 @@ class Exp_crossformer(Exp_Basic):
             )
 
         # self.model.train()
-        return mse + ce + self.args.weight * var_abs
+        return mse + ce + self.args.weight * var_abs, (mse, ce, var_abs)
 
     def train(self, setting, data):
         checkpoint = data_split = None
@@ -369,7 +371,7 @@ class Exp_crossformer(Exp_Basic):
             try:
                 self.load_state_dict(checkpoint[0][0])
                 model_optim.load_state_dict(checkpoint[0][1])
-                score = self.vali(vali_data, vali_loader)
+                score = self.vali(vali_data, vali_loader)[0]
                 # score = abs(checkpoint[1])
                 spoch = checkpoint[0][2]
                 print_color(
@@ -443,12 +445,13 @@ class Exp_crossformer(Exp_Basic):
             )
 
             print(
-                "Epoch: {0}, Steps: {1} | Train Loss: {2:.4g} Vali Loss: {3:.4g} Test Loss: {4:.4g}".format(
-                    epoch + 1, train_steps, train_loss, vali_loss, test_loss
-                )
+                f"Epoch: {epoch + 1}, Steps: {train_steps} | Train Loss: {train_loss:.4g} "
+                f"Vali Loss: {format_nested (vali_loss)} | "
+                f"Test Loss: {format_nested( test_loss)}"
             )
+
             early_stopping(
-                vali_loss,
+                vali_loss[0],
                 (
                     self.state_dict(),
                     model_optim.state_dict(),
@@ -523,7 +526,7 @@ class Exp_crossformer(Exp_Basic):
         trues = []
         metrics_all = []
         instance_num = 0
-        metric = make_metric(test_data.ycat)
+        metric = make_metric(self.args.alpha2)
 
         pred, y, ic, yc = [], [], [], []
         with torch.no_grad():

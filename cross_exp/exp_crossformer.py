@@ -200,7 +200,7 @@ class Exp_crossformer(Exp_Basic):
             assert input[0].shape[1] == 1
             _, tc = target
             _, _, ic = input
-            return cross_lap_entropy_with_nans(ic, tc) + cross_mse_loss_with_nans(
+            return cross_entropy_with_nans(ic, tc) + cross_mse_loss_with_nans(
                 input, target
             )
 
@@ -323,7 +323,7 @@ class Exp_crossformer(Exp_Basic):
         else:
             ic, yc = [torch.from_numpy(np.concatenate(x)) for x in (ic, yc)]
             ce = (
-                cross_entropy_with_nans(ic, yc).item()
+                cross_lap_entropy_with_nans(ic, yc).item()
                 + 10
                 - fuzzy_accuracy(ic, tc) * 10
             )
@@ -376,7 +376,7 @@ class Exp_crossformer(Exp_Basic):
                 spoch = checkpoint[0][2]
                 print_color(
                     93,
-                    f"suc to load. score {score} epoch {spoch} from:",
+                    f"suc to load. score {score:.4g} epoch {spoch} from:",
                     best_model_path,
                 )
             except (
@@ -411,7 +411,7 @@ class Exp_crossformer(Exp_Basic):
 
                 if (i + 1) % 100 == 0:
                     print(
-                        "\titers: {0:.4g}, epoch: {1} | loss: {2:.4g}".format(
+                        "\titers: {0}, epoch: {1} | loss: {2:.4g}".format(
                             i + 1, epoch + 1, loss.item()
                         )
                     )
@@ -432,7 +432,9 @@ class Exp_crossformer(Exp_Basic):
                     model_optim.step()
 
             print(
-                "Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time),
+                "Epoch: {} cost time: {:.4g}".format(
+                    epoch + 1, time.time() - epoch_time
+                ),
             )
             train_loss = np.average(train_loss)
             vali_loss = self.vali(

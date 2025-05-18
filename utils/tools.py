@@ -51,7 +51,7 @@ class EarlyStopping:
                         self.steps = 0
                         self.stage += 1
                         self.adj = True
-                        self.prev_val=float("inf")
+                        self.prev_val = float("inf")
                 else:
                     self.prev_val = val_loss
         else:
@@ -114,7 +114,7 @@ def init_args():
     )
     parser.add_argument("--delta", type=float, default=1.0, help="Huber 损失 δ")
     # parser.add_argument("--thresh",       type=float, default=0.03, help="加权 MSE 阈值")
-    parser.add_argument("--alpha2",        type=float, default=0.5, help="极端样本权重 α")
+    parser.add_argument("--alpha2", type=float, default=0.5, help="极端样本权重 α")
     # parser.add_argument("--tau",          type=float, default=0.9, help="Quantile τ")
     parser.add_argument("--lambda_huber", type=float, default=1.0)
     parser.add_argument("--lambda_mse", type=float, default=1.0)
@@ -220,20 +220,25 @@ def init_args():
         print(args.gpu)
     return args
 
+
 def format_nested(data, fmt=".4g"):
     if isinstance(data, (list, tuple)):
         open_bracket = "[" if isinstance(data, list) else "("
         close_bracket = "]" if isinstance(data, list) else ")"
-        return open_bracket + ", ".join(format_nested(item, fmt) for item in data) + close_bracket
+        return (
+            open_bracket
+            + ", ".join(format_nested(item, fmt) for item in data)
+            + close_bracket
+        )
     else:
         return f"{data:{fmt}}"
 
 
-def update_args(args, data_parser, itr,arg_set='vols'):
-    data_info=data_parser['vols']
-    if arg_set in data_parser.keys() and arg_set!='vols':
-        data_info.update( data_parser[arg_set])
-        data_info['data']=arg_set
+def update_args(args, data_parser, itr, arg_set="vols"):
+    data_info = data_parser["vols"].copy()
+    if arg_set in data_parser.keys() and arg_set != "vols":
+        data_info.update(data_parser[arg_set])
+        data_info["data"] = arg_set
     for k, v in data_info.items():
         args.__setattr__(k, v)
     if isinstance(args.data_split, str):

@@ -131,7 +131,7 @@ class Exp_crossformer(Exp_Basic):
         self.log_delta = nn.Parameter(torch.log(torch.tensor(args.delta)))
         self.weight = len(self.loss_logits) * 0.1 + args.weight + 1.2
         self.weight = 1 / self.weight, 0.1 / self.weight, args.weight / self.weight
-        self.alpha = 1 / 8
+        self.alpha = 0.2
         self.step = args.step
         self.args = args
 
@@ -229,15 +229,7 @@ class Exp_crossformer(Exp_Basic):
             ).mean()
             if self.ycat < 1:
                 loss_mse = (
-                    (
-                        (
-                            1
-                            + (self.alpha * (valid_tv + 2 * valid_tv.abs())).clamp(
-                                0, 0.8
-                            )
-                        )
-                        * u
-                    )
+                    ((1 + (self.alpha * valid_tv.abs()).clamp(0, 0.5)) * u)
                     .pow(2)
                     .mean()
                 )
@@ -311,7 +303,8 @@ class Exp_crossformer(Exp_Basic):
         pred = np.concatenate(pred)
         y = np.concatenate(y)
         mse = np.mean(
-            (1 + np.minimum(self.args.alpha2 * np.abs(y), 0.8)) * (pred - y) ** 2
+            (1 + np.minimum(self.args.alpha2 * np.abs(y), self.args.alpham))
+            * (pred - y) ** 2
         )
 
         var_y = np.std(y, axis=0)

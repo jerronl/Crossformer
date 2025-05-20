@@ -115,6 +115,7 @@ def init_args():
     parser.add_argument("--delta", type=float, default=1.0, help="Huber 损失 δ")
     # parser.add_argument("--thresh",       type=float, default=0.03, help="加权 MSE 阈值")
     parser.add_argument("--alpha2", type=float, default=0.5, help="极端样本权重 α")
+    parser.add_argument("--alpham", type=float, default=0.15, help="极端样本权重 α")
     # parser.add_argument("--tau",          type=float, default=0.9, help="Quantile τ")
     parser.add_argument("--lambda_huber", type=float, default=1.0)
     parser.add_argument("--lambda_mse", type=float, default=1.0)

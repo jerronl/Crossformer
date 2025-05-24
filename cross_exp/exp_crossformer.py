@@ -229,7 +229,7 @@ class Exp_crossformer(Exp_Basic):
             ).mean()
             if self.ycat < 1:
                 loss_mse = (
-                    ((1 + (self.alpha * valid_tv.abs()).clamp(0, 0.5)) * u)
+                    ((1 + (self.alpha * (valid_tv.abs()-valid_tv/2.0)).clamp(0, 0.5)) * u)
                     .pow(2)
                     .mean()
                 )
@@ -303,7 +303,7 @@ class Exp_crossformer(Exp_Basic):
         pred = np.concatenate(pred)
         y = np.concatenate(y)
         mse = np.mean(
-            (1 + np.minimum(self.args.alpha2 * np.abs(y), self.args.alpham))
+            (1 + np.minimum(self.args.alpha2 *(np.abs(y)-y/2.0), self.args.alpham))
             * (pred - y) ** 2
         )
 
@@ -316,7 +316,7 @@ class Exp_crossformer(Exp_Basic):
         else:
             ic, yc = [torch.from_numpy(np.concatenate(x)) for x in (ic, yc)]
             ce = (
-                cross_lap_entropy_with_nans(ic, yc).item()
+                cross_entropy_with_nans(ic, yc).item()
                 + 10
                 - fuzzy_accuracy(ic, tc) * 10
             )

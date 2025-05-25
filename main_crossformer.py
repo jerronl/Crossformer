@@ -20,8 +20,9 @@ data_parser = {
 }
 
 from cross_exp.exp_crossformer import Exp_crossformer
-from utils.tools import init_args,update_args
-args=init_args()
+from utils.tools import init_args, update_args
+
+args = init_args()
 batch_size = args.batch_size
 
 data_parser = {
@@ -141,8 +142,8 @@ data_parser = {
         "train_epochs": 100,
         "data_path": tables,
         "weight": 0.8,
-        'root_path':mydrive,
-        "step":2
+        "root_path": mydrive,
+        "step": 2,
     },
 }
 results = []
@@ -165,7 +166,7 @@ results = []
 
 for ii in range(args.itr):
     # setting record of experiments
-    setting = update_args(args,data_parser, ii)
+    setting = update_args(args, data_parser, ii)
 
     exp = Exp_crossformer(args)  # set experiments
     print(f">>>>>>>start training : {setting}>>>>>>>>>>>>>>>>>>>>>>>>>>")
@@ -230,7 +231,7 @@ for i in range(itr):
                 "query": f"date>'#{cutdate}' and floor(horizon)=={h+1} and e2d_20==17",
             },
         }
-        setting = update_args(args,data_parser,i)
+        setting = update_args(args, data_parser, i)
         DatasetMTS.clear()
         exp = Exp_crossformer(args)
         print(
@@ -247,7 +248,7 @@ data_parser = {
     },
 }
 for i in range(args.itr):
-    setting = update_args(args,data_parser,i)
+    setting = update_args(args, data_parser, i)
     DatasetMTS.clear()
     exp = Exp_crossformer(args)
     print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
@@ -288,7 +289,7 @@ for table in tables:
 #     "lo",
 # ]
 for i in range(args.itr):
-    setting = update_args(args,data_parser,i)
+    setting = update_args(args, data_parser, i)
     DatasetMTS.clear()
     exp = Exp_crossformer(args)
     print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")

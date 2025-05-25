@@ -362,10 +362,10 @@ class DatasetMTS(Dataset):
         if len(data) > 2:
             iv, sc, ic = data
             if ic is not None:
-                ic = F.softmax(ic.detach().cpu(), 2)
+                ic = F.softmax(ic.detach().cpu(),-1)
         else:
             iv, sc = data
-            sc = sc.detach().cpu()
+        sc = sc.detach().cpu().numpy()
         dt = iv.detach().cpu().numpy()
         if inverse:
             dt=self.scaler[-1].inverse_transform(dt)

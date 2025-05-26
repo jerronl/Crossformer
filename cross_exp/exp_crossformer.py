@@ -104,7 +104,7 @@ def cross_entropy_with_nans(ic, tc):
     return total_loss + (mc).sum() / tc.numel()
 
 
-def cross_lap_entropy_with_nans(ic, tc):
+def cross_lap_entropy_with_nans(ic, tc, min_samples_per_class=10):
     mc = torch.isnan(ic).any(dim=-1)  # mask for invalid
     imc = ~mc
     if imc.sum() == 0:
@@ -116,10 +116,93 @@ def cross_lap_entropy_with_nans(ic, tc):
 
         soft_labels = make_discrete_laplace_softlabel(tc_valid, num_classes)
 
-        # Soft label cross entropy
-        total_loss = -(soft_labels * log_probs_valid).sum(dim=-1).mean()
+        losses = -(soft_labels * log_probs_valid).sum(dim=-1)  # shape: [valid,]
+        loss_per_class = []
+        for c in range(num_classes):
+            mask_c = tc_valid == c
+            if mask_c.sum().item() >= min_samples_per_class:
+                avg_loss_c = losses[mask_c].mean()
+                loss_per_class.append(avg_loss_c)
 
-    return (total_loss + mc.sum()) / tc.numel()
+        if len(loss_per_class) == 0:
+            return 1 + mc.sum() / tc.numel()
+
+        # 平均每个满足样本数量要求的类别
+        total_loss = torch.stack(loss_per_class).mean()
+
+    return total_loss + mc.sum() / tc.numel()
+
+
+def cross_mse_loss_with_nans_np(
+    pred_mu,
+    pred_q90,
+    tv,
+    log_delta,
+    loss_logits,
+    weight,
+    log_sigma_mu,
+    log_sigma_q90,
+    tau,
+):
+    tv = tv.reshape(tv.shape[0], -1)
+
+    mi = np.isnan(pred_mu) | np.isnan(pred_q90)
+    mask = np.isnan(tv) | mi
+    valid_mu = pred_mu[~mask]
+
+    if valid_mu.size == 0:
+        return 1
+
+    valid_q90 = pred_q90[~mask]
+    valid_tv = tv[~mask]
+
+    delta = torch.exp(log_delta).numpy()
+    weights = F.softmax(loss_logits, dim=0).numpy() * weight[1] * 2
+
+    # Huber loss
+    u = valid_mu - valid_tv
+    abs_u = np.abs(u)
+    loss_huber = np.where(abs_u < delta, 0.5 * u**2 / delta, abs_u - 0.5 * delta).mean()
+
+    loss_mse = np.mean(u**2)
+
+    # Quantile loss (squared)
+    uq = valid_tv - valid_q90
+    loss_q90 = np.mean(np.maximum(tau * uq, (tau - 1) * uq) ** 2)
+
+    loss_mu_part = (
+        0.5 * loss_mse * torch.exp(-2 * log_sigma_mu) + log_sigma_mu
+    ).numpy()
+    loss_q90_part = (
+        0.5 * loss_q90 * torch.exp(-2 * log_sigma_q90) + log_sigma_q90
+    ).numpy()
+
+    variance_tv = np.var(tv)
+    variance_iv = np.var(pred_mu)
+
+    variance_loss = (variance_iv - variance_tv) ** 2
+
+    total_loss = (
+        np.sqrt(
+            np.maximum(
+                (weights[0] + weight[0]) * loss_mu_part
+                + (weights[1] + weight[1]) * loss_huber
+                + (weights[2] + weight[2]) * variance_loss,
+                1e-8,
+            )
+        )
+        + (weights[3] + weight[1]) * loss_q90_part
+        + mi.sum() / tv.size
+    )
+
+    return total_loss, (
+        loss_mu_part,
+        loss_mu_part,
+        variance_loss,
+        loss_q90_part,
+        weights,
+        weight,
+    )
 
 
 class Exp_crossformer(Exp_Basic):
@@ -238,16 +321,16 @@ class Exp_crossformer(Exp_Basic):
             loss_huber = torch.where(
                 abs_u < delta, 0.5 * u**2 / delta, abs_u - 0.5 * delta
             ).mean()
-            loss_mse = (
-                (1 + (self.alpha * valid_tv.abs()).clamp(0, 0.2)) * u.pow(2)
-            ).mean()
+            loss_mse = u.pow(2).mean()
             u = valid_tv - valid_q90
             loss_q90 = torch.mean(torch.max(self.tau * u, (self.tau - 1) * u) ** 2)
-            sigma_mu = torch.exp(self.log_sigma_mu)
-            sigma_q90 = torch.exp(self.log_sigma_q90)
+            loss_mu_part = (
+                0.5 * loss_mse * torch.exp(-2 * self.log_sigma_mu) + self.log_sigma_mu
+            )
+            loss_q90_part = (
+                0.5 * loss_q90 * torch.exp(-2 * self.log_sigma_q90) + self.log_sigma_q90
+            )
 
-            loss_mu_part = loss_mse / (2 * sigma_mu**2) + torch.log(sigma_mu)
-            loss_q90_part = loss_q90 / (2 * sigma_q90**2) + torch.log(sigma_q90)
             # Compute variance of predictions and targets
             variance_tv = nanvar(tv)
             variance_iv = nanvar(pred_mu)
@@ -289,7 +372,20 @@ class Exp_crossformer(Exp_Basic):
             cross_entropy_mse_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans
         )
 
-    def vali(self, vali_data, vali_loader):
+    def vali(self, vali_data, vali_loader, criterion):
+        self.model.eval()
+        total_loss = []
+        with torch.no_grad():
+            for i, (batch_x, batch_y) in enumerate(vali_loader):
+                pred, true = self._process_one_batch(
+                    vali_data, batch_x, batch_y, inverse=self.ycat + 1
+                )
+                loss = criterion(pred, true)
+                total_loss.append(loss)
+        total_loss = np.average(total_loss)
+        return total_loss, 0
+
+    def validate(self, vali_data, vali_loader):
         self.model.eval()
         pred, pred_q90, y, ic, yc = [], [], [], [], []
         with torch.no_grad():
@@ -302,51 +398,28 @@ class Exp_crossformer(Exp_Basic):
                 ic.append(pc)
                 y.append(tv)
                 yc.append(tc)
-        pred = np.concatenate(pred)
-        pred_q90 = np.concatenate(pred_q90)
-        y = np.concatenate(y)
-        u = pred - y
-        if self.ycat < 1:
-            mse = np.mean(
-                (
-                    1
-                    + np.minimum(
-                        np.maximum(0.3 * u, -0.7 * u) * self.args.alpha2,
-                        self.args.alpham,
-                    )
-                )
-                * u**2
+            pred = np.concatenate(pred)
+            pred_q90 = np.concatenate(pred_q90)
+            y = np.concatenate(y)
+            loss = cross_mse_loss_with_nans_np(
+                pred,
+                pred_q90,
+                y,
+                self.log_delta,
+                self.loss_logits,
+                self.weight,
+                self.log_sigma_mu,
+                self.log_sigma_q90,
+                self.tau,
             )
-        else:
-            mse = np.mean(u**2)
-
-        u_q90 = y - pred_q90
-        loss_q90 = np.mean(
-            np.square(np.maximum(self.tau * u_q90, (self.tau - 1) * u_q90))
-        )
-        var_y = np.std(y, axis=0)
-        var_p = np.std(pred, axis=0)
-        var_abs = np.mean((var_p - var_y) ** 2)
-        # var_rel = np.mean((var_y / (var_p + 1e-8) - 1) ** 2)
         if ic[0] is None:
             ce = 0
         else:
             ic, yc = [torch.from_numpy(np.concatenate(x)) for x in (ic, yc)]
-            ce = (
-                cross_lap_entropy_with_nans(ic, yc).item()
-                + 10
-                - fuzzy_accuracy(ic, tc) * 10
-            )
+            ce = cross_lap_entropy_with_nans(ic, yc).item()
 
         # self.model.train()
-        return mse + ce + self.args.weight * var_abs + loss_q90 * match_lambda(
-            mse, loss_q90
-        ).numpy() * 0.1, (
-            mse,
-            ce,
-            var_abs,
-            loss_q90,
-        )
+        return loss[0] + np.sum(ce) * self.args.alpham, (loss[1], ce)
 
     def train(self, setting, data):
         checkpoint = data_split = None
@@ -388,7 +461,10 @@ class Exp_crossformer(Exp_Basic):
             try:
                 self.load_state_dict(checkpoint[0][0])
                 model_optim.load_state_dict(checkpoint[0][1])
-                score = self.vali(vali_data, vali_loader)[0]
+                score = self.validate(
+                    vali_data,
+                    vali_loader,
+                )[0]
                 # score = abs(checkpoint[1])
                 spoch = checkpoint[0][2]
                 print_color(
@@ -454,11 +530,11 @@ class Exp_crossformer(Exp_Basic):
                 ),
             )
             train_loss = np.average(train_loss)
-            vali_loss = self.vali(
+            vali_loss = self.validate(
                 vali_data,
                 vali_loader,
             )
-            test_loss = self.vali(
+            test_loss = self.validate(
                 test_data,
                 test_loader,
             )

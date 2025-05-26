@@ -224,12 +224,18 @@ def init_args():
 
 def format_nested(data, fmt=".4g"):
     if isinstance(data, (list, tuple)):
-        open_bracket = "[" if isinstance(data, list) else "("
-        close_bracket = "]" if isinstance(data, list) else ")"
+        open_bracket = "(" if isinstance(data, tuple) else "["
+        close_bracket = ")" if isinstance(data, tuple) else "]"
         return (
             open_bracket
             + ", ".join(format_nested(item, fmt) for item in data)
             + close_bracket
+        )
+    elif isinstance(data, np.ndarray) and data.ndim>0:
+        return (
+            '['
+            + ", ".join(format_nested(item, fmt) for item in data)
+            + ']'
         )
     else:
         return f"{data:{fmt}}"

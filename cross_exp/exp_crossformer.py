@@ -117,18 +117,19 @@ def cross_lap_entropy_with_nans(ic, tc, min_samples_per_class=10):
         soft_labels = make_discrete_laplace_softlabel(tc_valid, num_classes)
 
         losses = -(soft_labels * log_probs_valid).sum(dim=-1)  # shape: [valid,]
-        loss_per_class = []
-        for c in range(num_classes):
-            mask_c = tc_valid == c
-            if mask_c.sum().item() >= min_samples_per_class:
-                avg_loss_c = losses[mask_c].mean()
-                loss_per_class.append(avg_loss_c)
+        # loss_per_class = []
+        # for c in range(num_classes):
+        #     mask_c = tc_valid == c
+        #     if mask_c.sum().item() >= min_samples_per_class:
+        #         avg_loss_c = losses[mask_c].mean()
+        #         loss_per_class.append(avg_loss_c)
 
-        if len(loss_per_class) == 0:
-            return 1 + mc.sum() / tc.numel()
+        # if len(loss_per_class) == 0:
+        #     return 1 + mc.sum() / tc.numel()
 
-        # 平均每个满足样本数量要求的类别
-        total_loss = torch.stack(loss_per_class).mean()
+        # # 平均每个满足样本数量要求的类别
+        # total_loss = torch.stack(loss_per_class).mean()
+        total_loss = losses.mean()
 
     return total_loss + mc.sum() / tc.numel()
 
@@ -170,36 +171,29 @@ def cross_mse_loss_with_nans_np(
     uq = valid_tv - valid_q90
     loss_q90 = np.mean(np.maximum(tau * uq, (tau - 1) * uq) ** 2)
 
-    loss_mu_part = (
-        0.5 * loss_mse * torch.exp(-2 * log_sigma_mu) + log_sigma_mu
-    ).numpy()
-    loss_q90_part = (
-        0.5 * loss_q90 * torch.exp(-2 * log_sigma_q90) + log_sigma_q90
-    ).numpy()
+    variance_tv = np.var(tv, axis=0)
+    variance_iv = np.var(pred_mu, axis=0)
 
-    variance_tv = np.var(tv)
-    variance_iv = np.var(pred_mu)
-
-    variance_loss = (variance_iv - variance_tv) ** 2
+    variance_loss = np.sqrt(np.mean((variance_iv - variance_tv) ** 2))
 
     total_loss = (
         np.sqrt(
             np.maximum(
-                (weights[0] + weight[0]) * loss_mu_part
+                (weights[0] + weight[0]) * loss_mse
                 + (weights[1] + weight[1]) * loss_huber
                 + (weights[2] + weight[2]) * variance_loss,
                 1e-8,
             )
         )
-        + (weights[3] + weight[1]) * loss_q90_part
+        # + (weights[3] + weight[1]) * loss_q90
         + mi.sum() / tv.size
     )
 
     return total_loss, (
-        loss_mu_part,
-        loss_mu_part,
+        loss_mse,
+        loss_huber,
         variance_loss,
-        loss_q90_part,
+        loss_q90,
         weights,
         weight,
     )
@@ -292,8 +286,10 @@ class Exp_crossformer(Exp_Basic):
             # assert input[0].shape[1] == 1
             _, tc = target
             _, _, ic = input
-            return cross_lap_entropy_with_nans(ic, tc) + cross_mse_loss_with_nans(
-                input, target
+            return (
+                cross_lap_entropy_with_nans(ic, tc) * self.args.alpham
+                - fuzzy_accuracy(ic, tc) * 5
+                + cross_mse_loss_with_nans(input, target)
             )
 
         def cross_mse_loss_with_nans(input, target):
@@ -336,9 +332,11 @@ class Exp_crossformer(Exp_Basic):
             variance_iv = nanvar(pred_mu)
 
             # Variance loss (maximize variance matching)
-            variance_loss = (variance_iv - variance_tv).pow(2).mean()
+            variance_loss = (variance_iv - variance_tv).pow(2).mean().sqrt()
             rel_var = (variance_tv / (1e-8 + variance_iv) - 1).pow(2).mean()
-            variance_loss += rel_var * match_lambda(variance_tv.mean(), 1)
+            variance_loss = variance_loss + rel_var * match_lambda(
+                variance_tv.mean(), 1
+            )
 
             loss = (
                 torch.sqrt(
@@ -416,7 +414,10 @@ class Exp_crossformer(Exp_Basic):
             ce = 0
         else:
             ic, yc = [torch.from_numpy(np.concatenate(x)) for x in (ic, yc)]
-            ce = cross_lap_entropy_with_nans(ic, yc).item()
+            ce = (
+                cross_lap_entropy_with_nans(ic, yc).item() * self.args.alpham,
+                10 - fuzzy_accuracy(ic, yc) * 5,
+            )
 
         # self.model.train()
         return loss[0] + np.sum(ce) * self.args.alpham, (loss[1], ce)

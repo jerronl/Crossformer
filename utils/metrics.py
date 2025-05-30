@@ -1,5 +1,5 @@
 import numpy as np
-from sklearn.metrics import log_loss
+from sklearn.metrics import accuracy_score
 
 
 def RSE(pred, true):
@@ -30,25 +30,48 @@ def MAPE(pred, true):
     return np.mean(np.abs((pred - true) / true))
 
 
-def MSPE(pred, true, alpha):
-    return np.mean((1 + np.minimum(alpha * np.abs(true), 0.8)) * (pred - true) ** 2)
+def MSPE(pred, true):
+    return np.mean(np.square((pred - true) / true))
 
 
-def make_metric(alpha):
-    def metric_cat(iv, tv, ic, tc):
+def make_metric(ycat):
+    def metric_cat(pred, true):
+        tv, tc = (
+            true
+            if isinstance(true[0], np.ndarray)
+            else (true[0].detach().cpu().numpy(), true[1].detach().cpu().numpy())
+        )
+        iv, ic = (
+            (pred[:, :-ycat], pred[:, -ycat:])
+            if isinstance(pred, np.ndarray)
+            else (
+                pred[:, :, :-ycat].detach().cpu().numpy(),
+                pred[:, 0, -ycat:].detach().cpu().numpy(),
+            )
+        )
         mae = MAE(iv, tv)
         mse = MSE(iv, tv)
         rmse = RMSE(iv, tv)
         mape = MAPE(iv, tv)
-        mspe = MSPE(iv, tv, alpha)
-        accr = (
-            -1
-            if ic is None
-            else log_loss(
-                np.eye(ic.shape[-1])[tc.flatten()], ic.reshape(-1, ic.shape[-1])
-            )
-        )
+        mspe = MSPE(iv, tv)
+        accr = accuracy_score(np.argmax(ic, axis=1), tc)
 
         return mae, mse, rmse, mape, mspe, accr
 
-    return metric_cat
+    def metric(pred, true):
+
+        tv, _ = (
+            true
+            if isinstance(true[0], np.ndarray)
+            else (true[0].detach().cpu().numpy(), true[1].detach().cpu().numpy())
+        )
+        iv = pred if isinstance(pred, np.ndarray) else pred.detach().cpu().numpy()
+        mae = MAE(iv, tv)
+        mse = MSE(iv, tv)
+        rmse = RMSE(iv, tv)
+        mape = MAPE(iv, tv)
+        mspe = MSPE(iv, tv)
+
+        return mae, mse, rmse, mape, mspe, -1
+
+    return metric_cat if ycat > 0 else metric

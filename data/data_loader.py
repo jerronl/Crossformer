@@ -7,8 +7,6 @@ from random import uniform
 from datetime import datetime, timedelta
 import pandas as pd, numpy as np
 from sklearn.preprocessing import StandardScaler
-from sklearn.base import BaseEstimator, TransformerMixin
-import torch.nn.functional as F
 
 # from einops import rearrange
 from torch.utils.data import Dataset
@@ -65,76 +63,11 @@ def cyclic_t(x):
     return tm_yday + tm_mday + tm_wday
 
 
-class MixedStandardScaler(BaseEstimator, TransformerMixin):
-    def __init__(self, m):
-        self.m = m
-        self.scaler_front = StandardScaler()
-        self.scaler_rest = StandardScaler()
-
-    def fit(self, X, y=None):
-        X = np.asarray(X)
-        self.orig_shape = X.shape
-        self.n_features = X.shape[-1]
-        if self.m > self.n_features:
-            raise ValueError(
-                f"m = {self.m} exceeds number of features = {self.n_features}"
-            )
-
-        # 前 m 列分别标准化
-        X_front = X[..., : self.m].reshape(-1, self.m)
-        self.scaler_front.fit(X_front)
-
-        # 后 k-m 列整体 flatten 成一列
-        X_rest = X[..., self.m :].reshape(-1, 1)
-        self.scaler_rest.fit(X_rest)
-
-        # 保存参数
-        self.front_mean_ = self.scaler_front.mean_
-        self.front_scale_ = self.scaler_front.scale_
-        self.rest_mean_ = self.scaler_rest.mean_[0]
-        self.rest_scale_ = self.scaler_rest.scale_[0]
-        return self
-
-    def transform(self, X):
-        X = np.asarray(X)
-        if X.shape[-1] != self.n_features:
-            raise ValueError(f"Expected {self.n_features} features, got {X.shape[-1]}.")
-
-        orig_shape = X.shape
-
-        # 标准化前 m 列
-        X_front = X[..., : self.m].reshape(-1, self.m)
-        X_front_scaled = self.scaler_front.transform(X_front).reshape(
-            *orig_shape[:-1], self.m
-        )
-
-        # 后面 flatten 标准化
-        X_rest = X[..., self.m :].reshape(-1, 1)
-        X_rest_scaled = self.scaler_rest.transform(X_rest).reshape(
-            *orig_shape[:-1], self.n_features - self.m
-        )
-
-        return np.concatenate([X_front_scaled, X_rest_scaled], axis=-1)
-
-    def inverse_transform(self, X_scaled):
-        if X_scaled.shape[-1] != self.n_features:
-            raise ValueError(
-                f"Expected {self.n_features} features, got {X_scaled.shape[-1]}."
-            )
-
-        orig_shape = X_scaled.shape
-
-        X_front_scaled = X_scaled[..., : self.m].reshape(-1, self.m)
-        X_front_orig = self.scaler_front.inverse_transform(X_front_scaled).reshape(
-            *orig_shape[:-1], self.m
-        )
-
-        X_rest_scaled = X_scaled[..., self.m :].reshape(-1, 1)
-        X_rest_orig = self.scaler_rest.inverse_transform(X_rest_scaled).reshape(
-            *orig_shape[:-1], self.n_features - self.m
-        )
-
-        return np.concatenate([X_front_orig, X_rest_orig], axis=-1)
+# def cyclic(x, c):
+#     cyclics = []
+#     for v, p in c:
+#         cyclics += cyclic_encode(x[:, v], p)
+#     return cyclics
 
 
 class DatasetMTS(Dataset):
@@ -205,7 +138,7 @@ class DatasetMTS(Dataset):
                 if self.query is not None:
                     df = df.query(self.query)
                     ds = [0, 0, 0, len(df) - 1]
-                elif table in self.data_split and self.data_split[table][-1] < len(df):
+                elif table in self.data_split:
                     ds = self.data_split[table]
                 else:
                     ds = (data_split * uniform(0.8, 0.9) * len(df)).astype(int)
@@ -231,29 +164,31 @@ class DatasetMTS(Dataset):
             xnp.append(df_raw[vnpt].values.astype(float).reshape((-1, len(vnp))))
             xsp.append(df_raw[vspt].values.astype(float).reshape((-1, len(vsp))))
             xpc.append(df_raw[vpct].values.reshape((-1, 1)))
-            _y = df_raw[vy].values
+            _y=df_raw[vy].values
             if cols["xvsp"]:
                 xvsp.append(df_raw["spot"].values.reshape(-1, 1))
-                y.append([_y, 0])
+                y.append([_y,0] )
             else:
                 xvsp.append(np.zeros((len(df_raw), 1), float))
-                _y = np.column_stack((_y, abs(_y[:, 0] - cols["ycat"] / 2.0)))
-                y.append([_y, _y[:, 0] - 1])
+                _y=np.column_stack((_y, abs(_y[:,0]-cols['ycat']/2.)))
+                y.append([_y,_y[:,0]-1] )
 
             assert (
                 len(xnp[-1]) < 1
                 or np.isnan(xnp[-1]).sum() == 0
                 and np.isnan(xpc[-1]).sum() == 0
             )
-        xs = [xnp, xsp, xpc, xvsp]
-        y1 = len(cols["vml"])
         if self.scaler is None:
-            scalers = [StandardScaler() for _ in xs] + [MixedStandardScaler(y1)]
-            for i, x in enumerate(xs):
-                scalers[i].fit(x[0])
-            scalers[i + 1].fit(y[0][0])
+            scaler_np, scaler_p, scaler_y, scaler_sp, scaler_vsp = [
+                StandardScaler() for _ in range(5)
+            ]
+            scaler_np.fit(xnp[0])
+            scaler_sp.fit(xsp[0].reshape((-1, 1)))
+            scaler_p.fit(xpc[0])
+            scaler_y.fit(y[0][0])
+            scaler_vsp.fit(xvsp[0])
         else:
-            scalers = self.scaler
+            scaler_np, scaler_p, scaler_y, scaler_sp, scaler_vsp = self.scaler
         ivs = [vnp.index(v) for v in vvs]
         idat = [vnp.index(v) for v in ["date"]]
         idatv = [vvs.index(v) for v in ["date"]]
@@ -269,10 +204,7 @@ class DatasetMTS(Dataset):
                     + cyclic_encode(xnp[i][:, icyc[0]], icyc[1]),
                     axis=1,
                 )
-                xx, xsp[i], xpc[i] = [
-                    scalers[j].transform(x[i]).reshape((-1, self.in_len, x[i].shape[1]))
-                    for j, x in enumerate(xs[:3])
-                ]
+                xx = scaler_np.transform(xnp[i]).reshape((-1, self.in_len, len(vnp)))
                 cyclics.append(
                     np.concatenate(
                         [
@@ -283,17 +215,19 @@ class DatasetMTS(Dataset):
                     )
                 )
                 xnp[i] = xx[:, :, len(ivs) :]
+                xsp[i] = scaler_sp.transform(xsp[i].reshape((-1, 1))).reshape(
+                    (-1, self.in_len, len(vsp))
+                )
+                xpc[i] = scaler_p.transform(xpc[i]).reshape((-1, self.in_len, len(vpc)))
                 x = df_raw[vvs].values
                 c = np.concatenate(
                     cyclic_t(x[:, idatv]) + cyclic_encode(x[:, icyc[0]], icyc[1]),
                     axis=1,
                 )
-                x = (x - scalers[0].mean_[ivs]) / scalers[0].scale_[ivs]
+                x = (x - scaler_np.mean_[ivs]) / scaler_np.scale_[ivs]
                 xvs.append(np.concatenate([x, c], axis=1))
-                xvsp[i] = scalers[-2].transform(xvsp[i])
-                y[i][0] = (
-                    scalers[-1].transform(y[i][0]).reshape(-1, 1, y[i][0].shape[1])
-                )
+                xvsp[i] = scaler_vsp.transform(xvsp[i])
+                y[i][0] = scaler_y.transform(y[i][0]).reshape(-1, 1, y[i][0].shape[1])
                 assert (
                     np.isnan(xnp[i]).sum() == 0
                     and np.isnan(xsp[i]).sum() == 0
@@ -303,7 +237,7 @@ class DatasetMTS(Dataset):
                     and np.isnan(xvsp[-1]).sum() == 0
                 )
         self.data = [
-            scalers,
+            (scaler_np, scaler_p, scaler_y, scaler_sp, scaler_vsp),
             (
                 xnp[self.set_type].shape[2]
                 # + xsp[self.set_type].shape[2]
@@ -351,22 +285,17 @@ class DatasetMTS(Dataset):
             xvs[index],
             xvsp[index],
         )
-        seq_y = y[0][index], y[1][index] if isinstance(y[1], np.ndarray) else 0
+        seq_y = y[0][index], y[1][index] if isinstance(y[1],np.ndarray) else 0
 
         return seq_x, seq_y
 
     def __len__(self):
         return self.shape[0]
 
-    def inverse_transform(self, data, inverse):
-        if len(data) > 2:
-            iv, sc, ic = data
-            if ic is not None:
-                ic = F.softmax(ic.detach().cpu(),-1)
-        else:
-            iv, sc = data
-        sc = sc.detach().cpu().numpy()
-        dt = iv.detach().cpu().numpy()
-        if inverse:
-            dt=self.scaler[-1].inverse_transform(dt)
-        return (dt, sc, ic) if len(data) > 2 else (dt, sc)
+    def inverse_transform(self, data):
+        dt = data[0].cpu() if isinstance(data, (tuple, list)) else data.cpu()
+        w = self.scaler[2].mean_.shape[0]
+        dt = np.concatenate(
+            (self.scaler[2].inverse_transform(dt[:, 0, :w]), dt[:, 0, w:]), axis=1
+        )
+        return (dt, data[1].cpu()) if isinstance(data, (tuple, list)) else dt

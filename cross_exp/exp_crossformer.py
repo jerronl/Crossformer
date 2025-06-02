@@ -150,9 +150,9 @@ class Exp_crossformer(Exp_Basic):
 
             # Compute MSE
             diff = valid_iv - valid_tv
-            mse_loss = (
-                diff.pow(2) + diff.clamp(min=0).pow(2) * self.args.over_weight
-            ).mean()
+            mse_loss = diff.pow(2)
+            if self.args.over_weight > 0:
+                mse_loss = mse_loss + diff.clamp(min=0).pow(2) * self.args.over_weight
             # Compute variance of predictions and targets
             variance_tv = ((valid_tv - valid_tv.mean()).pow(2)).mean()
             variance_iv = ((valid_iv - valid_iv.mean()).pow(2)).mean()
@@ -163,7 +163,7 @@ class Exp_crossformer(Exp_Basic):
             ).pow(2) * match_lambda(variance_tv, 10)
 
             return (
-                (mse_loss + weight * variance_loss) ** 0.5
+                (mse_loss.mean() + weight * variance_loss) ** 0.5
             ) * 10 + mi.sum() / target[0].numel()
 
         return (

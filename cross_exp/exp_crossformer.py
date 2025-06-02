@@ -14,51 +14,22 @@ from torch.nn import DataParallel
 from data.data_loader import DatasetMTS
 from cross_exp.exp_basic import Exp_Basic
 from cross_models.cross_former import Crossformer
-from utils.tools import EarlyStopping, print_color
+from utils.tools import EarlyStopping, print_color, format_nested
 from utils.metrics import make_metric
 
 
 warnings.filterwarnings("ignore")
 
-# class MSLELoss(nn.Module):
-#     def __init__(self):
-#         super(MSLELoss, self).__init__()
 
-#     def forward(self, predicted, actual):
-#         # Adding a small number to ensure the log function receives values > 0
-#         return torch.mean((torch.log(predicted + 1) - torch.log(actual + 1)) ** 2)
-
-# class MSLELoss(nn.Module):
-#     def __init__(self):
-#         super(MSLELoss, self).__init__()
-
-#     def forward(self, predicted, actual):
-#         mse, cel = nn.MSELoss(), nn.CrossEntropyLoss()
-
-#         def cross_entropy_mse_loss_with_nans(input, target):
-#             assert input.shape[1] == 1
-#             tv, tc = target
-#             iv, ic = input[:, :, :-ycat], input[:, 0, -ycat:]
-#             mi = isnan(iv)
-#             mask = isnan(tv) | mi
-#             mc = isnan(ic).any(dim=1)
-#             return (
-#                 (mse(iv[~mask], tv[~mask]) ** 0.5) * 10
-#                 + cel(ic[~mc], tc[~mc])
-#                 + (mi.sum() + mc.sum()) / target[0].numel()
-#             )
-
-#         def cross_mse_loss_with_nans(input, target):
-#             assert input.shape[1] == 1
-#             tv, _ = target
-#             iv = input
-#             mi = isnan(iv)
-#             mask = isnan(tv) | mi
-#             return (mse(iv[~mask], tv[~mask]) ** 0.5) * 10 + mi.sum() / target[
-#                 0
-#             ].numel()
-
-#         return torch.mean((torch.log(predicted + 1) - torch.log(actual + 1)) ** 2)
+def match_lambda(
+    v1: torch.Tensor, v2: torch.Tensor, eps: float = 1e-8, base: float = 2.0
+) -> torch.Tensor:
+    v1 = torch.as_tensor(v1)
+    v2 = torch.as_tensor(v2)
+    ratio = v1.detach() / (v2.detach() + eps)
+    log_ratio = torch.log(ratio)
+    quant = torch.floor(log_ratio / base) * base
+    return torch.exp(quant)
 
 
 class Exp_crossformer(Exp_Basic):
@@ -66,6 +37,7 @@ class Exp_crossformer(Exp_Basic):
         super(Exp_crossformer, self).__init__(args)
         self.ycat = self.model = None
         self.checkpoint = {}
+        self.args = args
 
     def build_model(self, data):
         model = Crossformer(
@@ -127,49 +99,45 @@ class Exp_crossformer(Exp_Basic):
         return data_set, data_loader
 
     def _select_optimizer(self):
-        model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
+        model_optim = optim.Adam(self.parameters(), lr=self.args.learning_rate)
         return model_optim
 
     def _select_criterion(self, ycat, weight):
         # cel = nn.CrossEntropyLoss()
-
         def cross_entropy_mse_loss_with_nans(input, target):
             assert input.shape[1] == 1
-            _, tc = target
-            iv, ic = input[:, :, :-ycat], input[:, 0, -ycat:]
-            mc = isnan(ic).any(dim=1)
-            adjacents = [
-                torch.clamp(tc[~mc] + i, 0, ic.size(1) - 1) for i in [1, -1]
-            ] + [
-                torch.clamp(ic.size(1) - tc[~mc] + i, 0, ic.size(1) - 1)
-                for i in [
-                    -1,
-                ]  # -1, -2]
-            ]
-            log_probs_valid = F.log_softmax(
-                ic[~mc], dim=-1
-            )  # Shape: (batch_size, num_classes)
-            tc_valid = tc[~mc]  # Shape: (valid_batch_size,)
+            _, tc = target  # tc: true class
+            iv, ic = (
+                input[:, :, :-ycat],
+                input[:, 0, -ycat:],
+            )  # iv: regression part, ic: classification logits
+            mc = isnan(ic).any(dim=1)  # mask for NaNs
 
-            # Exact match loss
-            exact_match_loss = -log_probs_valid[
-                torch.arange(log_probs_valid.size(0)), tc_valid
-            ].mean()
+            log_probs_valid = F.log_softmax(ic[~mc], dim=-1)  # shape: (B, C)
+            tc_valid = tc[~mc]  # shape: (B,)
 
-            # Compute adjacent losses
-            adjacent_losses = [
-                -log_probs_valid[torch.arange(log_probs_valid.size(0)), adjacent].mean()
-                for adjacent in adjacents
-            ]
-            # Combine losses
-            total_loss = exact_match_loss + sum(adjacent_losses) / 4.0 / len(
-                adjacent_losses
+            num_classes = log_probs_valid.size(1)
+
+            # Construct candidate class indices: [true, left, right]
+            left = torch.clamp(tc_valid - 1, min=0)
+            right = torch.clamp(tc_valid + 1, max=num_classes - 1)
+            candidates = torch.stack([tc_valid, left, right], dim=1)  # (B, 3)
+
+            # Apply weights: [1, 2, 2] -> heavier penalty for adjacent classes
+            weights = torch.tensor(
+                [1.0, self.args.ajc_weight, self.args.ajc_weight],
+                device=tc_valid.device,
+            ).view(1, 3)
+
+            # Gather cross-entropy for candidate classes: shape (B, 3)
+            cross_entropy_loss = (
+                -(log_probs_valid.gather(1, candidates) * weights).mean() * 10
             )
-            return (
-                total_loss
-                + cross_mse_loss_with_nans(iv, target)
-                + mc.sum() / target[0].numel()
-            )
+
+            # MSE (can replace with asymmetric one if desired)
+            mse_loss = cross_mse_loss_with_nans(iv, target)
+
+            return cross_entropy_loss + mse_loss + mc.sum() / target[0].numel()
 
         def cross_mse_loss_with_nans(input, target):
             assert input.shape[1] == 1
@@ -181,8 +149,10 @@ class Exp_crossformer(Exp_Basic):
             valid_tv = tv[~mask]
 
             # Compute MSE
-            mse_loss = (valid_iv - valid_tv).pow(2).mean()
-
+            diff = valid_iv - valid_tv
+            mse_loss = (
+                diff.pow(2) + diff.clamp(min=0).pow(2) * self.args.over_weight
+            ).mean()
             # Compute variance of predictions and targets
             variance_tv = ((valid_tv - valid_tv.mean()).pow(2)).mean()
             variance_iv = ((valid_iv - valid_iv.mean()).pow(2)).mean()
@@ -190,7 +160,7 @@ class Exp_crossformer(Exp_Basic):
             # Variance loss (maximize variance matching)
             variance_loss = (variance_iv - variance_tv).pow(2) + (
                 variance_tv / (1e-8 + variance_iv) - 1
-            ).pow(2) * 0.01
+            ).pow(2) * match_lambda(variance_tv, 10)
 
             return (
                 (mse_loss + weight * variance_loss) ** 0.5
@@ -250,13 +220,16 @@ class Exp_crossformer(Exp_Basic):
         spoch = 0
         if checkpoint is not None:
             try:
-                self.model.load_state_dict(checkpoint[0][0])
+                if "model.enc_pos_embedding" in checkpoint[0][0]:
+                    self.load_state_dict(checkpoint[0][0])
+                else:
+                    self.model.load_state_dict(checkpoint[0][0])
                 model_optim.load_state_dict(checkpoint[0][1])
                 score = abs(checkpoint[1])
                 spoch = checkpoint[0][2]
                 print_color(
-                    94,
-                    f"suc to load. score {score} epoch {spoch} from:",
+                    93,
+                    f"suc to load. score {score:.4g} epoch {spoch} from:",
                     best_model_path,
                 )
             except (
@@ -285,12 +258,14 @@ class Exp_crossformer(Exp_Basic):
                 model_optim.zero_grad()
                 pred, true = self._process_one_batch(train_data, batch_x, batch_y)
                 loss = criterion(pred, true)
-                assert ~isnan(loss)
-                train_loss.append(loss.item())
+                if ~isnan(loss):
+                    train_loss.append(loss.item())
+                    loss.backward()
+                    model_optim.step()
 
                 if (i + 1) % 100 == 0:
                     print(
-                        "\titers: {0:.3f}, epoch: {1} | loss: {2:.7f}".format(
+                        "\titers: {0}, epoch: {1} | loss: {2:.4g}".format(
                             i + 1, epoch + 1, loss.item()
                         )
                     )
@@ -299,32 +274,34 @@ class Exp_crossformer(Exp_Basic):
                         (self.args.train_epochs - epoch) * train_steps - i
                     )
                     print(
-                        "\tspeed: {:.4f}s/iter; left time: {:.4f}s".format(
+                        "\tspeed: {:.4g}s/iter; left time: {:.4g}s".format(
                             speed, left_time
                         )
                     )
                     iter_count = 0
                     time_now = time.time()
 
-                loss.backward()
-                model_optim.step()
-
-            print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
+            print(
+                "Epoch: {} cost time: {:.4g}".format(
+                    epoch + 1, time.time() - epoch_time
+                ),
+            )
             train_loss = np.average(train_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)
 
             print(
-                "Epoch: {0:.3f}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
-                    epoch + 1, train_steps, train_loss, vali_loss, test_loss
-                )
+                f"Epoch: {epoch + 1}, Steps: {train_steps} | Train Loss: {train_loss:.4g} "
+                f"Vali Loss: {format_nested (vali_loss)} | "
+                f"Test Loss: {format_nested( test_loss)}"
             )
+
             early_stopping(
                 vali_loss,
                 (
-                    self.model.state_dict(),
+                    self.state_dict(),
                     model_optim.state_dict(),
-                    epoch,
+                    epoch + 1,
                     train_data.scaler,
                     train_data.data_split,
                 ),
@@ -334,23 +311,20 @@ class Exp_crossformer(Exp_Basic):
                 print_color(95, "Early stopping")
                 break
 
-            if early_stopping.counter > 1 and early_stopping.adjust_learning_rate(
-                model_optim
-            ):
+            if early_stopping.adjust_learning_rate(model_optim):
                 best_model_path = path + "/" + "checkpoint.pth"
                 checkpoint = list(torch.load(best_model_path, weights_only=False))
-                self.model.load_state_dict(checkpoint[0][0])
+                if "model.enc_pos_embedding" in checkpoint[0][0]:
+                    self.load_state_dict(checkpoint[0][0])
+                else:
+                    self.model.load_state_dict(checkpoint[0][0])
                 model_optim.load_state_dict(checkpoint[0][1])
 
         best_model_path = path + "/" + "checkpoint.pth"
         checkpoint = list(torch.load(best_model_path, weights_only=False))
-        self.model.load_state_dict(checkpoint[0][0])
+        self.load_state_dict(checkpoint[0][0])
         checkpoint[0] = list(checkpoint[0])
-        checkpoint[0][0] = (
-            self.model.module.state_dict()
-            if isinstance(self.model, DataParallel)
-            else self.model.state_dict()
-        )
+        checkpoint[0][0] = self.state_dict()
         torch.save(checkpoint, path + "/checkpoint.pth")
         self.checkpoint[key] = (self.model, checkpoint[0][3], checkpoint[0][4])
         torch.save(
@@ -376,7 +350,7 @@ class Exp_crossformer(Exp_Basic):
             )
             try:
                 self.checkpoint[key] = torch.load(best_model_path, weights_only=False)
-                print_color(94, "suc to load", best_model_path)
+                print_color(93, "suc to load", best_model_path)
             except (
                 FileNotFoundError,
                 RuntimeError,

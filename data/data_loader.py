@@ -74,10 +74,10 @@ class MixedStandardScaler(BaseEstimator, TransformerMixin):
     def fit(self, X, y=None):
         X = np.asarray(X)
         self.orig_shape = X.shape
-        self.n_features = X.shape[-1]
-        if self.m > self.n_features:
+        self.n_features_in_ = X.shape[-1]
+        if self.m > self.n_features_in_:
             raise ValueError(
-                f"m = {self.m} exceeds number of features = {self.n_features}"
+                f"m = {self.m} exceeds number of features = {self.n_features_in_}"
             )
 
         # 前 m 列分别标准化
@@ -97,8 +97,10 @@ class MixedStandardScaler(BaseEstimator, TransformerMixin):
 
     def transform(self, X):
         X = np.asarray(X)
-        if X.shape[-1] != self.n_features:
-            raise ValueError(f"Expected {self.n_features} features, got {X.shape[-1]}.")
+        if X.shape[-1] != self.n_features_in_:
+            raise ValueError(
+                f"Expected {self.n_features_in_} features, got {X.shape[-1]}."
+            )
 
         orig_shape = X.shape
 
@@ -111,16 +113,16 @@ class MixedStandardScaler(BaseEstimator, TransformerMixin):
         # 后面 flatten 标准化
         X_rest = X[..., self.m :].reshape(-1, 1)
         X_rest_scaled = self.scaler_rest.transform(X_rest).reshape(
-            *orig_shape[:-1], self.n_features - self.m
+            *orig_shape[:-1], self.n_features_in_ - self.m
         )
 
         return np.concatenate([X_front_scaled, X_rest_scaled], axis=-1)
 
     def inverse_transform(self, X_scaled):
         X_scaled = np.asarray(X_scaled)
-        if X_scaled.shape[-1] != self.n_features:
+        if X_scaled.shape[-1] != self.n_features_in_:
             raise ValueError(
-                f"Expected {self.n_features} features, got {X_scaled.shape[-1]}."
+                f"Expected {self.n_features_in_} features, got {X_scaled.shape[-1]}."
             )
 
         orig_shape = X_scaled.shape
@@ -132,7 +134,7 @@ class MixedStandardScaler(BaseEstimator, TransformerMixin):
 
         X_rest_scaled = X_scaled[..., self.m :].reshape(-1, 1)
         X_rest_orig = self.scaler_rest.inverse_transform(X_rest_scaled).reshape(
-            *orig_shape[:-1], self.n_features - self.m
+            *orig_shape[:-1], self.n_features_in_ - self.m
         )
 
         return np.concatenate([X_front_orig, X_rest_orig], axis=-1)
@@ -360,8 +362,12 @@ class DatasetMTS(Dataset):
         return self.shape[0]
 
     def inverse_transform(self, data):
-        dt = data[0].detach().cpu() if isinstance(data, (tuple, list)) else data.detach().cpu()
-        w = self.scaler[-1].n_features
+        dt = (
+            data[0].detach().cpu()
+            if isinstance(data, (tuple, list))
+            else data.detach().cpu()
+        )
+        w = self.scaler[-1].n_features_in_
         dt = np.concatenate(
             (self.scaler[-1].inverse_transform(dt[:, 0, :w]), dt[:, 0, w:]), axis=1
         )

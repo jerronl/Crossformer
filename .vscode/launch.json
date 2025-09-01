@@ -11,8 +11,8 @@
             "program": "${workspaceFolder}/main_crossformer.py",
             "console": "integratedTerminal",
             "justMyCode": false,
-            "env": {"PYTHONPATH": "d:/ProgramData/miniconda3/envs/e1/bin/"},
-            "python": "d:/ProgramData/miniconda3/envs/e1/python.exe"
+            "env": {"PYTHONPATH": "d:/ProgramData/miniconda3/envs/s1/bin/"},
+            "python": "d:/ProgramData/miniconda3/envs/s1/python.exe"
         },
         {
             "name": "Python Debugger: current",
@@ -22,7 +22,7 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "cwd": "${fileDirname}",
-            "env": {"PYTHONPATH": "d:/ProgramData/miniconda3/envs/e1/bin/"}
+            "env": {"PYTHONPATH": "d:/ProgramData/miniconda3/envs/s1/bin/"}
         }, 
         {
             "name": "Python Debugger: current s1",

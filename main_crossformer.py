@@ -53,8 +53,8 @@ data_parser = {
 from data.data_loader import DatasetMTS
 import pandas as pd
 
-import seaborn as sns, numpy as np, math
-import matplotlib.pyplot as plt
+# import seaborn as sns, numpy as np, math
+# import matplotlib.pyplot as plt
 
 
 def regplot(cols, figsize=(16, 16)):

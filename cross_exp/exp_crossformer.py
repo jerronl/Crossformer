@@ -5,11 +5,11 @@ import pickle
 import warnings
 import numpy as np
 
+import torch.profiler
 import torch
-from torch import nn, optim, isnan
+from torch import nn, optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from torch.nn import DataParallel
 
 from data.data_loader import DatasetMTS
 from cross_exp.exp_basic import Exp_Basic
@@ -111,7 +111,7 @@ class Exp_crossformer(Exp_Basic):
                 input[:, :, :-ycat],
                 input[:, 0, -ycat:],
             )  # iv: regression part, ic: classification logits
-            mc = isnan(ic).any(dim=1)  # mask for NaNs
+            mc = torch.isnan(ic).any(dim=1)  # mask for NaNs
 
             log_probs_valid = F.log_softmax(ic[~mc], dim=-1)  # shape: (B, C)
             tc_valid = tc[~mc]  # shape: (B,)
@@ -131,7 +131,7 @@ class Exp_crossformer(Exp_Basic):
 
             # Gather cross-entropy for candidate classes: shape (B, 3)
             cross_entropy_loss = (
-                -(log_probs_valid.gather(1, candidates) * weights).mean() * 10
+                -(log_probs_valid.gather(1, candidates) * weights).mean() * 3
             )
 
             # MSE (can replace with asymmetric one if desired)
@@ -143,8 +143,8 @@ class Exp_crossformer(Exp_Basic):
             assert input.shape[1] == 1
             tv, _ = target
             iv = input
-            mi = isnan(iv)
-            mask = isnan(tv) | mi
+            mi = torch.isnan(iv)
+            mask = torch.isnan(tv) | mi
             valid_iv = iv[~mask]
             valid_tv = tv[~mask]
 
@@ -245,6 +245,19 @@ class Exp_crossformer(Exp_Basic):
             verbose=True,
             best_score=score,
         )
+        if self.args.profile_mode:
+          prof = torch.profiler.profile(
+              schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
+              activities=[
+                  torch.profiler.ProfilerActivity.CPU,
+                  torch.profiler.ProfilerActivity.CUDA],
+              on_trace_ready=torch.profiler.tensorboard_trace_handler('./log'),
+              record_shapes=True,
+              profile_memory=True,
+              with_stack=True,
+          )
+          prof.__enter__()
+          
         for epoch in range(spoch, self.args.train_epochs):
             time_now = time.time()
             iter_count = 0
@@ -258,10 +271,15 @@ class Exp_crossformer(Exp_Basic):
                 model_optim.zero_grad()
                 pred, true = self._process_one_batch(train_data, batch_x, batch_y)
                 loss = criterion(pred, true)
-                if ~isnan(loss):
+                if ~torch.isnan(loss):
                     train_loss.append(loss.item())
                     loss.backward()
                     model_optim.step()
+
+                if self.args.profile_mode: 
+                    prof.step()
+                    if i >= 10:
+                      break  # only profile a few batches
 
                 if (i + 1) % 100 == 0:
                     print(
@@ -280,6 +298,10 @@ class Exp_crossformer(Exp_Basic):
                     )
                     iter_count = 0
                     time_now = time.time()
+                    
+            if self.args.profile_mode: 
+                prof.__exit__(None, None, None)
+                return
 
             print(
                 "Epoch: {} cost time: {:.4g}".format(
@@ -448,70 +470,3 @@ class Exp_crossformer(Exp_Basic):
         outputs = dataset_object.inverse_transform(outputs)
         batch_y = dataset_object.inverse_transform(batch_y)
         return outputs, batch_y
-
-    # def eval(self, setting, save_pred=False, inverse=False):
-    #     # evaluate a saved model
-    #     args = self.args
-    #     data_set = Dataset_MTS(
-    #         root_path=args.root_path,
-    #         data_path=args.data_path,
-    #         flag="test",
-    #         size=[args.in_len, args.out_len],
-    #         data_split=args.data_split,
-    #         scale=True,
-    #         scale_statistic=args.scale_statistic,
-    #     )
-
-    #     data_loader = DataLoader(
-    #         data_set,
-    #         batch_size=args.batch_size,
-    #         shuffle=False,
-    #         num_workers=args.num_workers,
-    #         drop_last=False,
-    #     )
-
-    #     self.model.eval()
-
-    #     preds = []
-    #     trues = []
-    #     metrics_all = []
-    #     instance_num = 0
-    #     metric = make_metric(data_set.ycat)
-
-    #     with torch.no_grad():
-    #         for i, (batch_x, batch_y) in enumerate(data_loader):
-    #             pred, true = self._process_one_batch(
-    #                 data_set, batch_x, batch_y, inverse
-    #             )
-    #             batch_size = pred.shape[0]
-    #             instance_num += batch_size
-    #             batch_metric = (
-    #                 np.array(
-    #                     metric(pred.detach().cpu().numpy(), true.detach().cpu().numpy())
-    #                 )
-    #                 * batch_size
-    #             )
-    #             metrics_all.append(batch_metric)
-    #             if save_pred:
-    #                 preds.append(pred.detach().cpu().numpy())
-    #                 trues.append(true.detach().cpu().numpy())
-
-    #     metrics_all = np.stack(metrics_all, axis=0)
-    #     metrics_mean = metrics_all.sum(axis=0) / instance_num
-
-    #     # result save
-    #     folder_path = "./results/" + setting + "/"
-    #     if not os.path.exists(folder_path):
-    #         os.makedirs(folder_path)
-
-    #     mae, mse, rmse, mape, mspe = metrics_mean
-    #     print("mse:{:.3f}, mae:{}".format(mse, mae))
-
-    #     np.save(folder_path + "metrics.npy", np.array([mae, mse, rmse, mape, mspe]))
-    #     if save_pred:
-    #         preds = np.concatenate(preds, axis=0)
-    #         trues = np.concatenate(trues, axis=0)
-    #         np.save(folder_path + "pred.npy", preds)
-    #         np.save(folder_path + "true.npy", trues)
-
-    #     return mae, mse, rmse, mape, mspe

@@ -1,5 +1,13 @@
 import numpy as np
-from sklearn.metrics import accuracy_score
+
+# from sklearn.metrics import accuracy_score
+
+
+def fuzzy_accuracy(pred_logits, true_labels):
+    pred_class = np.argmax(pred_logits, axis=-1)
+    diff = np.abs(pred_class - true_labels)
+    score = np.where(diff == 0, 1.0, np.where(diff == 1, 0.25, 0.0))
+    return score.mean()
 
 
 def RSE(pred, true):
@@ -54,7 +62,7 @@ def make_metric(ycat):
         rmse = RMSE(iv, tv)
         mape = MAPE(iv, tv)
         mspe = MSPE(iv, tv)
-        accr = accuracy_score(np.argmax(ic, axis=1), tc)
+        accr = fuzzy_accuracy(ic, tc)
 
         return mae, mse, rmse, mape, mspe, accr
 

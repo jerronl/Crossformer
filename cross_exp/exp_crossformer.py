@@ -1,4 +1,4 @@
-import os
+import os, sys, traceback
 import time
 import pickle
 
@@ -65,6 +65,16 @@ class Exp_crossformer(Exp_Basic):
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
         self.model = model.to(self.device)
 
+        k = 10
+        idx = torch.arange(self.ycat)  # (C,)
+        dist = (idx.view(-1, 1) - idx.view(1, -1)).abs()  # (C, C)  距离=索引差的绝对值
+        far_idx_lut = torch.topk(
+            dist, k=k, dim=1, largest=True, sorted=False
+        ).indices  # (C, K)
+        self.register_buffer(
+            "far_idx_lut", far_idx_lut.to(self.device), persistent=True
+        )
+
     def _get_data(self, flag, data=None, data_path=None, scaler=None, data_split=None):
         args = self.args
 
@@ -106,33 +116,50 @@ class Exp_crossformer(Exp_Basic):
         # cel = nn.CrossEntropyLoss()
         def cross_entropy_mse_loss_with_nans(input, target):
             assert input.shape[1] == 1
-            _, tc = target  # tc: true class
-            iv, ic = (
-                input[:, :, :-ycat],
-                input[:, 0, -ycat:],
-            )  # iv: regression part, ic: classification logits
-            mc = torch.isnan(ic).any(dim=1)  # mask for NaNs
+            _, tc = target
+            iv, ic = input[:, :, :-ycat], input[:, 0, -ycat:]
 
-            log_probs_valid = F.log_softmax(ic[~mc], dim=-1)  # shape: (B, C)
-            tc_valid = tc[~mc]  # shape: (B,)
+            mc = torch.isnan(ic).any(dim=1)
+            if (~mc).sum() == 0:
+                return ic.sum() * 0.0
 
-            num_classes = log_probs_valid.size(1)
+            log_probs = F.log_softmax(ic[~mc], dim=-1)
+            probs = log_probs.exp()
+            tc_valid = tc[~mc].long()
+            num_classes = log_probs.size(1)
 
-            # Construct candidate class indices: [true, left, right]
             left = torch.clamp(tc_valid - 1, min=0)
             right = torch.clamp(tc_valid + 1, max=num_classes - 1)
-            candidates = torch.stack([tc_valid, left, right], dim=1)  # (B, 3)
+            candidates = torch.stack([tc_valid, left, right], dim=1)
 
-            # Apply weights: [1, 2, 2] -> heavier penalty for adjacent classes
             weights = torch.tensor(
                 [1.0, self.args.ajc_weight, self.args.ajc_weight],
                 device=tc_valid.device,
+                dtype=log_probs.dtype,
             ).view(1, 3)
 
-            # Gather cross-entropy for candidate classes: shape (B, 3)
-            cross_entropy_loss = (
-                -(log_probs_valid.gather(1, candidates) * weights).mean() * 3
-            )
+            try:
+                ce_adj = -(log_probs.gather(1, candidates) * weights).mean() * 3.0
+            except Exception as e:
+                tb = sys.exc_info()[2]
+                while tb.tb_next:
+                    tb = tb.tb_next
+                frame = tb.tb_frame
+                print("Exception at:", frame.f_code.co_filename, "line", frame.f_lineno)
+                print("Locals in this frame:")
+                for k, v in frame.f_locals.items():
+                    try:
+                        print(f"  {k}: {type(v)} {getattr(v, 'shape', '')}")
+                    except Exception:
+                        print(f"  {k}: {v}")
+                traceback.print_exc()
+                raise
+
+            far_idx = self.far_idx_lut[tc_valid]  # (Bv, K)
+            far_prob_sum = probs.gather(1, far_idx).sum(dim=1)  # (Bv,)
+            far_loss = far_prob_sum.mean()
+
+            cross_entropy_loss = ce_adj + self.args.ajc_weight * far_loss * 4
 
             # MSE (can replace with asymmetric one if desired)
             mse_loss = cross_mse_loss_with_nans(iv, target)
@@ -246,18 +273,19 @@ class Exp_crossformer(Exp_Basic):
             best_score=score,
         )
         if self.args.profile_mode:
-          prof = torch.profiler.profile(
-              schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
-              activities=[
-                  torch.profiler.ProfilerActivity.CPU,
-                  torch.profiler.ProfilerActivity.CUDA],
-              on_trace_ready=torch.profiler.tensorboard_trace_handler('./log'),
-              record_shapes=True,
-              profile_memory=True,
-              with_stack=True,
-          )
-          prof.__enter__()
-          
+            prof = torch.profiler.profile(
+                schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
+                activities=[
+                    torch.profiler.ProfilerActivity.CPU,
+                    torch.profiler.ProfilerActivity.CUDA,
+                ],
+                on_trace_ready=torch.profiler.tensorboard_trace_handler("./log"),
+                record_shapes=True,
+                profile_memory=True,
+                with_stack=True,
+            )
+            prof.__enter__()
+
         for epoch in range(spoch, self.args.train_epochs):
             time_now = time.time()
             iter_count = 0
@@ -276,10 +304,10 @@ class Exp_crossformer(Exp_Basic):
                     loss.backward()
                     model_optim.step()
 
-                if self.args.profile_mode: 
+                if self.args.profile_mode:
                     prof.step()
                     if i >= 10:
-                      break  # only profile a few batches
+                        break  # only profile a few batches
 
                 if (i + 1) % 100 == 0:
                     print(
@@ -298,8 +326,8 @@ class Exp_crossformer(Exp_Basic):
                     )
                     iter_count = 0
                     time_now = time.time()
-                    
-            if self.args.profile_mode: 
+
+            if self.args.profile_mode:
                 prof.__exit__(None, None, None)
                 return
 

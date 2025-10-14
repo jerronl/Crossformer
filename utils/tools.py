@@ -114,7 +114,7 @@ def init_args():
     )
     parser.add_argument("--over_weight", type=float, default=0.05, help="over_weight")
     # parser.add_argument("--thresh",       type=float, default=0.03, help="加权 MSE 阈值")
-    parser.add_argument("--ajc_weight", type=float, default=.25, help="ajc_weight")
+    parser.add_argument("--ajc_weight", type=float, default=0.35, help="ajc_weight")
     parser.add_argument("--alpham", type=float, default=0.15, help="极端样本权重 α")
     # parser.add_argument("--tau",          type=float, default=0.9, help="Quantile τ")
     parser.add_argument("--lambda_huber", type=float, default=1.0)
@@ -232,12 +232,8 @@ def format_nested(data, fmt=".4g"):
             + ", ".join(format_nested(item, fmt) for item in data)
             + close_bracket
         )
-    elif isinstance(data, np.ndarray) and data.ndim>0:
-        return (
-            '['
-            + ", ".join(format_nested(item, fmt) for item in data)
-            + ']'
-        )
+    elif isinstance(data, np.ndarray) and data.ndim > 0:
+        return "[" + ", ".join(format_nested(item, fmt) for item in data) + "]"
     else:
         return f"{data:{fmt}}"
 

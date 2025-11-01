@@ -65,15 +65,16 @@ class Exp_crossformer(Exp_Basic):
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
         self.model = model.to(self.device)
 
-        k = 10
-        idx = torch.arange(self.ycat)  # (C,)
-        dist = (idx.view(-1, 1) - idx.view(1, -1)).abs()  # (C, C)  距离=索引差的绝对值
-        far_idx_lut = torch.topk(
-            dist, k=k, dim=1, largest=True, sorted=False
-        ).indices  # (C, K)
-        self.register_buffer(
-            "far_idx_lut", far_idx_lut.to(self.device), persistent=True
-        )
+        if self.ycat > 0:
+            k = 10
+            idx = torch.arange(self.ycat)  # (C,)
+            dist = (idx.view(-1, 1) - idx.view(1, -1)).abs()  # (C, C)  距离=索引差的绝对值
+            far_idx_lut = torch.topk(
+                dist, k=k, dim=1, largest=True, sorted=False
+            ).indices  # (C, K)
+            self.register_buffer(
+                "far_idx_lut", far_idx_lut.to(self.device), persistent=True
+            )
 
     def _get_data(self, flag, data=None, data_path=None, scaler=None, data_split=None):
         args = self.args

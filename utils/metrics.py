@@ -3,11 +3,43 @@ import numpy as np
 # from sklearn.metrics import accuracy_score
 
 
-def fuzzy_accuracy(pred_logits, true_labels):
-    pred_class = np.argmax(pred_logits, axis=-1)
-    diff = np.abs(pred_class - true_labels)
-    score = np.where(diff == 0, 1.0, np.where(diff == 1, 0.25, 0.0))
+def fuzzy_accuracy(pred_logits, true_labels, alpha=np.log(4.0)):
+    # 统一转成 numpy，防止 tensor/numpy 混着报错
+    pred_logits_np = (
+        pred_logits.detach().cpu().numpy()
+        if hasattr(pred_logits, "detach")
+        else np.asarray(pred_logits)
+    )
+    true_labels_np = (
+        true_labels.detach().cpu().numpy()
+        if hasattr(true_labels, "detach")
+        else np.asarray(true_labels)
+    )
+
+    # 取分类结果
+    pred_class = np.argmax(pred_logits_np, axis=-1)   # (...,)
+    diff = np.abs(pred_class - true_labels_np)        # (...,)
+
+    # 距离加权分数：d=0 -> 1, d=1 -> 0.25, d=2 -> ~0.06, d越大越接近0
+    score = np.exp(-alpha * diff)
+
     return score.mean()
+
+def mean_bucket_distance(pred_logits, true_labels):
+    pred_logits_np = (
+        pred_logits.detach().cpu().numpy()
+        if hasattr(pred_logits, "detach")
+        else np.asarray(pred_logits)
+    )
+    true_labels_np = (
+        true_labels.detach().cpu().numpy()
+        if hasattr(true_labels, "detach")
+        else np.asarray(true_labels)
+    )
+
+    pred_class = np.argmax(pred_logits_np, axis=-1)
+    diff = np.abs(pred_class - true_labels_np)
+    return diff.mean()
 
 
 def RSE(pred, true):
@@ -61,7 +93,7 @@ def make_metric(ycat):
         mse = MSE(iv, tv)
         rmse = RMSE(iv, tv)
         mape = MAPE(iv, tv)
-        mspe = MSPE(iv, tv)
+        mspe = mean_bucket_distance(ic, tc)
         accr = fuzzy_accuracy(ic, tc)
 
         return mae, mse, rmse, mape, mspe, accr

@@ -22,14 +22,15 @@ warnings.filterwarnings("ignore")
 
 
 def match_lambda(
-    v1: torch.Tensor, v2: torch.Tensor, eps: float = 1e-8, base: float = 2.0
+    v1: torch.Tensor,
+    v2: torch.Tensor,
+    eps: float = 1e-8,
+    beta: float = 1.0,
 ) -> torch.Tensor:
     v1 = torch.as_tensor(v1)
     v2 = torch.as_tensor(v2)
-    ratio = v1.detach() / (v2.detach() + eps)
-    log_ratio = torch.log(ratio)
-    quant = torch.floor(log_ratio / base) * base
-    return torch.exp(quant)
+    ratio = (v1 + eps) / (v2 + eps)
+    return ratio.pow(beta)
 
 
 class Exp_crossformer(Exp_Basic):
@@ -64,17 +65,6 @@ class Exp_crossformer(Exp_Basic):
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
         self.model = model.to(self.device)
-
-        if self.ycat > 0:
-            k = 10
-            idx = torch.arange(self.ycat)  # (C,)
-            dist = (idx.view(-1, 1) - idx.view(1, -1)).abs()  # (C, C)  距离=索引差的绝对值
-            far_idx_lut = torch.topk(
-                dist, k=k, dim=1, largest=True, sorted=False
-            ).indices  # (C, K)
-            self.register_buffer(
-                "far_idx_lut", far_idx_lut.to(self.device), persistent=True
-            )
 
     def _get_data(self, flag, data=None, data_path=None, scaler=None, data_split=None):
         args = self.args
@@ -114,89 +104,115 @@ class Exp_crossformer(Exp_Basic):
         return model_optim
 
     def _select_criterion(self, ycat, weight):
-        # cel = nn.CrossEntropyLoss()
-        def cross_entropy_mse_loss_with_nans(input, target):
-            assert input.shape[1] == 1
-            _, tc = target
-            iv, ic = input[:, :, :-ycat], input[:, 0, -ycat:]
-
-            mc = torch.isnan(ic).any(dim=1)
-            if (~mc).sum() == 0:
-                return ic.sum() * 0.0
-
-            log_probs = F.log_softmax(ic[~mc], dim=-1)
-            probs = log_probs.exp()
-            tc_valid = tc[~mc].long()
-            num_classes = log_probs.size(1)
-
-            left = torch.clamp(tc_valid - 1, min=0)
-            right = torch.clamp(tc_valid + 1, max=num_classes - 1)
-            candidates = torch.stack([tc_valid, left, right], dim=1)
-
-            weights = torch.tensor(
-                [1.0, self.args.ajc_weight, self.args.ajc_weight],
-                device=tc_valid.device,
-                dtype=log_probs.dtype,
-            ).view(1, 3)
-
-            try:
-                ce_adj = -(log_probs.gather(1, candidates) * weights).mean() * 3.0
-            except Exception as e:
-                tb = sys.exc_info()[2]
-                while tb.tb_next:
-                    tb = tb.tb_next
-                frame = tb.tb_frame
-                print("Exception at:", frame.f_code.co_filename, "line", frame.f_lineno)
-                print("Locals in this frame:")
-                for k, v in frame.f_locals.items():
-                    try:
-                        print(f"  {k}: {type(v)} {getattr(v, 'shape', '')}")
-                    except Exception:
-                        print(f"  {k}: {v}")
-                traceback.print_exc()
-                raise
-
-            far_idx = self.far_idx_lut[tc_valid]  # (Bv, K)
-            far_prob_sum = probs.gather(1, far_idx).sum(dim=1)  # (Bv,)
-            far_loss = far_prob_sum.mean()
-
-            cross_entropy_loss = ce_adj + self.args.ajc_weight * far_loss * 4
-
-            # MSE (can replace with asymmetric one if desired)
-            mse_loss = cross_mse_loss_with_nans(iv, target)
-
-            return cross_entropy_loss + mse_loss + mc.sum() / target[0].numel()
-
+        # 回归 MSE + 方差匹配
         def cross_mse_loss_with_nans(input, target):
             assert input.shape[1] == 1
             tv, _ = target
             iv = input
+
             mi = torch.isnan(iv)
             mask = torch.isnan(tv) | mi
+
             valid_iv = iv[~mask]
             valid_tv = tv[~mask]
 
-            # Compute MSE
+            if valid_iv.numel() == 0:
+                return iv.sum() * 0.0
+
             diff = valid_iv - valid_tv
-            mse_loss = diff.pow(2)
-            if self.args.over_weight > 0:
-                mse_loss = mse_loss + diff.clamp(min=0).pow(2) * self.args.over_weight
-            # Compute variance of predictions and targets
-            variance_tv = ((valid_tv - valid_tv.mean()).pow(2)).mean()
-            variance_iv = ((valid_iv - valid_iv.mean()).pow(2)).mean()
+            base_mse = diff.pow(2)
 
-            # Variance loss (maximize variance matching)
-            variance_loss = (variance_iv - variance_tv).pow(2) + (
-                variance_tv / (1e-8 + variance_iv) - 1
-            ).pow(2) * match_lambda(variance_tv, 10)
+            over_weight = getattr(self.args, "over_weight", 0.0)
+            if over_weight > 0:
+                over_penalty = diff.clamp(min=0).pow(2) * over_weight
+                mse_loss = (base_mse + over_penalty).mean()
+            else:
+                mse_loss = base_mse.mean()
 
-            return (
-                (mse_loss.mean() + weight * variance_loss) ** 0.5
-            ) * 10 + mi.sum() / target[0].numel()
+            use_var_loss = getattr(self.args, "use_var_loss", False)
+            if use_var_loss:
+                variance_tv = ((valid_tv - valid_tv.mean()).pow(2)).mean()
+                variance_iv = ((valid_iv - valid_iv.mean()).pow(2)).mean()
 
-        return (
-            cross_entropy_mse_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans
-        )
+                eps = 1e-8
+                abs_term = (variance_iv - variance_tv).pow(2)
+                rel_term = ((variance_tv / (variance_iv + eps)) - 1.0).pow(2)
+
+                lambda_var = getattr(self.args, "lambda_var", 1.0)
+                beta = getattr(self.args, "lambda_var_beta", 1.0)
+
+                # 这里用的是你在文件顶部定义的 match_lambda（平滑权重）
+                dynamic_weight = match_lambda(
+                    variance_tv, variance_iv, eps=eps, beta=beta
+                )
+                var_loss = lambda_var * dynamic_weight * (abs_term + rel_term)
+            else:
+                var_loss = mse_loss * 0.0
+
+            reg_loss = mse_loss + var_loss
+            nan_penalty = mi.sum() / target[0].numel()
+
+            return reg_loss + nan_penalty
+
+        def cross_entropy_loss_with_nans(input, target):
+            assert input.shape[1] == 1
+            _, tc = target
+
+            iv, ic = input[:, :, :-ycat], input[:, 0, -ycat:]
+            mc = torch.isnan(ic).any(dim=1)
+            if (~mc).sum() == 0:
+                return ic.sum() * 0.0
+
+            ic_valid = ic[~mc]
+            tc_valid = tc[~mc].long()
+            log_probs = F.log_softmax(ic_valid, dim=-1)
+            probs = log_probs.exp()
+            num_classes = log_probs.size(1)
+
+            device = ic_valid.device
+            dtype = ic_valid.dtype
+
+            dist_alpha = getattr(self.args, "dist_alpha", 1.0)
+            W = getattr(self, "_class_soft_weights", None)
+            if (
+                W is None
+                or W.size(0) != num_classes
+                or W.device != device
+                or W.dtype != dtype
+            ):
+                idx = torch.arange(num_classes, device=device, dtype=dtype)
+                dist_mat = (idx.view(-1, 1) - idx.view(1, -1)).abs()
+                W = torch.exp(-dist_alpha * dist_mat)
+                W = W / W.sum(dim=1, keepdim=True)
+                self._class_soft_weights = W
+
+            soft_targets = W.index_select(0, tc_valid)
+
+            ce_per_sample = -(soft_targets * log_probs).sum(dim=1)
+            lambda_ce = getattr(self.args, "lambda_ce", 1.0)
+            ce_loss = lambda_ce * ce_per_sample.mean()
+
+            use_expected_dist_penalty = getattr(
+                self.args, "use_expected_dist_penalty", False
+            )
+            if use_expected_dist_penalty:
+                class_idx = torch.arange(num_classes, device=device, dtype=dtype).view(
+                    1, -1
+                )
+                dist = (class_idx - tc_valid.view(-1, 1)).abs()
+                expected_dist = (dist * probs).sum(dim=1)
+                lambda_dist = getattr(self.args, "lambda_dist", 0.0)
+                dist_loss = lambda_dist * expected_dist.mean()
+            else:
+                dist_loss = ic_valid.sum() * 0.0
+
+            cls_loss = ce_loss + dist_loss
+            mask_penalty = mc.sum() / target[0].numel()
+
+            reg_loss = cross_mse_loss_with_nans(iv, target)
+            return cls_loss + mask_penalty + self.args.lambda_mse * reg_loss
+
+        return cross_entropy_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans
 
     def vali(self, vali_data, vali_loader, criterion):
         self.model.eval()
@@ -300,7 +316,8 @@ class Exp_crossformer(Exp_Basic):
                 model_optim.zero_grad()
                 pred, true = self._process_one_batch(train_data, batch_x, batch_y)
                 loss = criterion(pred, true)
-                if ~torch.isnan(loss):
+
+                if not torch.isnan(loss).item():
                     train_loss.append(loss.item())
                     loss.backward()
                     model_optim.step()
@@ -339,15 +356,15 @@ class Exp_crossformer(Exp_Basic):
             )
             train_loss = np.average(train_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
-            test_loss = self.vali(test_data, test_loader, criterion)
+            # test_loss = self.vali(test_data, test_loader, criterion)
 
             print(
                 f"Epoch: {epoch + 1}, Steps: {train_steps} | Train Loss: {train_loss:.4g} "
                 f"Vali Loss: {format_nested (vali_loss)} | "
-                f"Test Loss: {format_nested( test_loss)}"
+                # f"Test Loss: {format_nested( test_loss)}"
             )
 
-            early_stopping(
+            if early_stopping(
                 vali_loss,
                 (
                     self.state_dict(),
@@ -357,7 +374,8 @@ class Exp_crossformer(Exp_Basic):
                     train_data.data_split,
                 ),
                 path,
-            )
+            ):
+                self.test(setting, data, inverse=True, test_data=(vali_data, vali_loader))
             if early_stopping.early_stop:
                 print_color(95, "Early stopping")
                 break
@@ -393,32 +411,36 @@ class Exp_crossformer(Exp_Basic):
         inverse=False,
         data_path=None,
         run_metric=True,
+        test_data=None,
     ):
-        key = setting + data
-        if key not in self.checkpoint:
-            best_model_path = (
-                os.path.join(self.args.checkpoints, key) + "/crossformer.pkl"
+        if test_data is None:
+            key = setting + data
+            if key not in self.checkpoint:
+                best_model_path = (
+                    os.path.join(self.args.checkpoints, key) + "/crossformer.pkl"
+                )
+                try:
+                    self.checkpoint[key] = torch.load(best_model_path, weights_only=False)
+                    print_color(93, "suc to load", best_model_path)
+                except (
+                    FileNotFoundError,
+                    RuntimeError,
+                    IndexError,
+                    pickle.UnpicklingError,
+                ) as e:
+                    print_color(91, "failed to load", e, best_model_path)
+            self.model = self.checkpoint[key][0]
+            test_data, test_loader = self._get_data(
+                data=data,
+                flag="test",
+                scaler=self.checkpoint[key][1],
+                data_path=data_path,
+                data_split=(
+                    self.checkpoint[key][2] if len(self.checkpoint[key]) > 2 else None
+                ),
             )
-            try:
-                self.checkpoint[key] = torch.load(best_model_path, weights_only=False)
-                print_color(93, "suc to load", best_model_path)
-            except (
-                FileNotFoundError,
-                RuntimeError,
-                IndexError,
-                pickle.UnpicklingError,
-            ) as e:
-                print_color(91, "failed to load", e, best_model_path)
-        self.model = self.checkpoint[key][0]
-        test_data, test_loader = self._get_data(
-            data=data,
-            flag="test",
-            scaler=self.checkpoint[key][1],
-            data_path=data_path,
-            data_split=(
-                self.checkpoint[key][2] if len(self.checkpoint[key]) > 2 else None
-            ),
-        )
+        else:
+            test_data, test_loader = test_data
 
         self.model.eval()
 
@@ -433,11 +455,15 @@ class Exp_crossformer(Exp_Basic):
                 pred, true = self._process_one_batch(test_data, batch_x, batch_y)
                 batch_size = pred.shape[0]
                 instance_num += batch_size
+
+                # 先 inverse，再算 metric
+                if inverse:
+                    pred, true = self._inverse(test_data, pred, true)
+
                 if run_metric:
                     batch_metric = np.array(metric(pred, true)) * batch_size
                     metrics_all.append(batch_metric)
-                if inverse:
-                    pred, true = self._inverse(test_data, pred, true)
+
                 if save_pred:
                     preds.append(
                         pred
@@ -462,13 +488,13 @@ class Exp_crossformer(Exp_Basic):
             mae, mse, rmse, mape, mspe, accr = metrics_mean
             print_color(
                 93,
-                f"mae:{mae:.3f}, mse:{mse:.3f}, rmse:{rmse:.3f}, mape:{mape:.3f}, mspe:{mspe:.3f}, accr:{accr}",
+                f"mae:{mae:.3f}, mse:{mse:.3f}, rmse:{rmse:.3f}, mape:{mape:.3f}, {'mspe' if accr==-1 else 'mdst'}:{mspe:.3f}, accr:{accr}",
             )
 
-            np.save(
-                folder_path + f"mmae{mae:.3f}, accr{accr}.npy",
-                np.array([mae, mse, rmse, mape, mspe, accr]),
-            )
+            # np.save(
+            #     folder_path + f"mmae{mae:.3f}, accr{accr}.npy",
+            #     np.array([mae, mse, rmse, mape, mspe, accr]),
+            # )
             # if save_pred:
             #     preds = np.concatenate(preds, axis=0)
             #     trues = np.concatenate(trues, axis=0)

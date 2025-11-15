@@ -59,6 +59,7 @@ class EarlyStopping:
             self.save_checkpoint(val_loss, model, path)
             self.counter = 0
             self.steps = 0
+            return True
 
     def adjust_learning_rate(self, optimizer):
         if self.adj:
@@ -106,22 +107,17 @@ import argparse
 def init_args():
     parser = argparse.ArgumentParser(description="CrossFormer")
 
+    # ----------------- 基本数据与路径 -----------------
     parser.add_argument("--data", type=str, default="vols", help="data")
     parser.add_argument("--step", type=int, default=1, help="step")
     parser.add_argument("--weight", type=float, default=0.8, help="weight")
+
     parser.add_argument(
         "--root_path", type=str, default="", help="root path of the data file"
     )
-    parser.add_argument("--over_weight", type=float, default=0.05, help="over_weight")
-    # parser.add_argument("--thresh",       type=float, default=0.03, help="加权 MSE 阈值")
-    parser.add_argument("--ajc_weight", type=float, default=0.35, help="ajc_weight")
-    parser.add_argument("--alpham", type=float, default=0.15, help="极端样本权重 α")
-    # parser.add_argument("--tau",          type=float, default=0.9, help="Quantile τ")
-    parser.add_argument("--lambda_huber", type=float, default=1.0)
-    parser.add_argument("--lambda_mse", type=float, default=1.0)
-    parser.add_argument("--lambda_reg", type=float, default=0.5)
-    parser.add_argument("--lambda_q90", type=float, default=0.5)
-    parser.add_argument("--data_path", type=list, default=".", help="data file")
+    parser.add_argument(
+        "--data_path", type=list, default=".", help="data file"
+    )
     parser.add_argument(
         "--data_split",
         type=str,
@@ -135,9 +131,70 @@ def init_args():
         help="location to store model checkpoints",
     )
 
+    # ----------------- loss 相关超参 -----------------
+    parser.add_argument(
+        "--over_weight",
+        type=float,
+        default=0.05,
+        help="extra weight for over-estimation in MSE",
+    )
+
+    # 分类 soft-label 距离衰减系数
+    parser.add_argument(
+        "--dist_alpha",
+        type=float,
+        default=1.0,
+        help="distance decay factor for soft label (larger -> more peaked)",
+    )
+    parser.add_argument(
+        "--lambda_ce",
+        type=float,
+        default=1.0,
+        help="weight for classification CE part",
+    )
+    parser.add_argument(
+        "--use_expected_dist_penalty",
+        type=bool,
+        default=False,
+        help="whether to use expected distance penalty (Wasserstein-style)",
+    )
+    parser.add_argument(
+        "--lambda_dist",
+        type=float,
+        default=0.0,
+        help="weight for expected distance penalty",
+    )
+
+    # 回归 MSE 与方差匹配
+    parser.add_argument(
+        "--lambda_mse",
+        type=float,
+        default=1.0,
+        help="weight for regression MSE in total loss",
+    )
+    parser.add_argument(
+        "--use_var_loss",
+        type=bool,
+        default=True,
+        help="whether to add variance matching term",
+    )
+    parser.add_argument(
+        "--lambda_var",
+        type=float,
+        default=0.5,
+        help="base weight for variance matching term",
+    )
+    parser.add_argument(
+        "--lambda_var_beta",
+        type=float,
+        default=1.0,
+        help="exponent beta for dynamic variance weight",
+    )
+
+    # ----------------- Crossformer 模型结构 -----------------
     parser.add_argument("--in_len", type=int, default=20, help="input MTS length (T)")
     parser.add_argument(
-        "--out_len", type=int, default=1, help="output MTS length (\tau)"
+        "--out_len", type=int, default=1, help="output MTS length (tau)"
     )
     parser.add_argument("--seg_len", type=int, default=5, help="segment length (L_seg)")
     parser.add_argument(
@@ -169,6 +226,7 @@ def init_args():
         default=False,
     )
 
+    # ----------------- 训练相关 -----------------
     parser.add_argument(
         "--num_workers", type=int, default=0, help="data loader num workers"
     )
@@ -197,17 +255,18 @@ def init_args():
         default=False,
     )
 
-    parser.add_argument("--profile_mode", type=bool, default=False, help="use gpu")
+    # ----------------- 设备与运行模式 -----------------
+    parser.add_argument("--profile_mode", type=bool, default=False, help="profile mode")
     parser.add_argument("--use_gpu", type=bool, default=True, help="use gpu")
-    parser.add_argument("--resume", type=bool, default=True, help="resume")
-    parser.add_argument("--query", type=str, default=None, help="resume")
-    # parser.add_argument("--use_gpu", type=bool, default=False, help="use gpu")
-    parser.add_argument("--gpu", type=int, default=0, help="gpu")
+    parser.add_argument("--resume", type=bool, default=True, help="resume from ckpt")
+    parser.add_argument("--query", type=str, default=None, help="query filter for data")
+
+    parser.add_argument("--gpu", type=int, default=0, help="gpu id")
     parser.add_argument(
         "--use_multi_gpu", action="store_true", help="use multiple gpus", default=False
     )
     parser.add_argument(
-        "--devices", type=str, default="0,1,2,3", help="device ids of multile gpus"
+        "--devices", type=str, default="0,1,2,3", help="device ids of multiple gpus"
     )
 
     args = parser.parse_args(args=[])
@@ -220,6 +279,7 @@ def init_args():
         args.device_ids = [int(id_) for id_ in device_ids]
         args.gpu = args.device_ids[0]
         print(args.gpu)
+
     return args
 
 
@@ -250,7 +310,11 @@ def update_args(args, data_parser, itr, arg_set="vols"):
 
     print("Args in experiment:")
     print(args)
-    setting = "Crossformer_itr{}_il{}_ol{}_sl{}_win{}_fa{}_dm{}_nh{}_el{}_wt{}".format(
+
+    setting = (
+        "Crossformer_itr{}_il{}_ol{}_sl{}_win{}_fa{}_dm{}_nh{}_el{}_"
+        "wt{}_lmse{}_da{}_lvar{}"
+    ).format(
         itr,
         args.in_len,
         args.out_len,
@@ -261,5 +325,8 @@ def update_args(args, data_parser, itr, arg_set="vols"):
         args.n_heads,
         args.e_layers,
         args.weight,
+        args.lambda_mse,
+        args.dist_alpha,
+        args.lambda_var,
     )
     return setting

@@ -358,7 +358,10 @@ class Exp_crossformer(Exp_Basic):
                 ),
             )
             train_loss = np.average(train_loss)
-            vali_loss = self.vali(vali_data, vali_loader, criterion)
+            if score:
+                vali_loss = self.vali(vali_data, vali_loader, criterion)
+            else:
+                vali_loss = np.inf
             # test_loss = self.vali(test_data, test_loader, criterion)
 
             print(

@@ -1,4 +1,6 @@
-import os, sys, traceback
+import os
+import sys
+import traceback
 import time
 import pickle
 
@@ -40,27 +42,28 @@ class Exp_crossformer(Exp_Basic):
         self.checkpoint = {}
         self.args = args
 
-    def build_model(self, data):
-        model = Crossformer(
-            data.data_dim,
-            data.out_dim,
-            data.ycat,
-            self.args.in_len,
-            self.args.out_len,
-            self.args.seg_len,
-            data.sect,
-            data.sp,
-            self.args.win_size,
-            self.args.factor,
-            self.args.d_model,
-            self.args.d_ff,
-            self.args.n_heads,
-            self.args.e_layers,
-            self.args.dropout,
-            self.args.baseline,
-            self.device,
-            [torch.tensor(d, dtype=torch.float32) for d in data[:2][0]],
-        ).float()
+    def build_model(self, data, model=None):
+        if model is None:
+            model = Crossformer(
+                data.data_dim,
+                data.out_dim,
+                data.ycat,
+                self.args.in_len,
+                self.args.out_len,
+                self.args.seg_len,
+                data.sect,
+                data.sp,
+                self.args.win_size,
+                self.args.factor,
+                self.args.d_model,
+                self.args.d_ff,
+                self.args.n_heads,
+                self.args.e_layers,
+                self.args.dropout,
+                self.args.baseline,
+                self.device,
+                [torch.tensor(d, dtype=torch.float32) for d in data[:2][0]],
+            ).float()
         self.ycat = data.ycat
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
@@ -386,7 +389,13 @@ class Exp_crossformer(Exp_Basic):
                 ),
                 path,
             ):
-                self.test(setting, data, run_metric=True, inverse=True, test_data=(vali_data, vali_loader))
+                self.test(
+                    setting,
+                    data,
+                    run_metric=True,
+                    inverse=True,
+                    test_data=(vali_data, vali_loader),
+                )
             if early_stopping.early_stop:
                 print_color(95, "Early stopping")
                 break
@@ -431,7 +440,9 @@ class Exp_crossformer(Exp_Basic):
                     os.path.join(self.args.checkpoints, key) + "/crossformer.pkl"
                 )
                 try:
-                    self.checkpoint[key] = torch.load(best_model_path, weights_only=False)
+                    self.checkpoint[key] = torch.load(
+                        best_model_path, weights_only=False
+                    )
                     print_color(93, "suc to load", best_model_path)
                 except (
                     FileNotFoundError,
@@ -440,7 +451,6 @@ class Exp_crossformer(Exp_Basic):
                     pickle.UnpicklingError,
                 ) as e:
                     print_color(91, "failed to load", e, best_model_path)
-            self.model = self.checkpoint[key][0]
             test_data, test_loader = self._get_data(
                 data=data,
                 flag="test",
@@ -450,6 +460,7 @@ class Exp_crossformer(Exp_Basic):
                     self.checkpoint[key][2] if len(self.checkpoint[key]) > 2 else None
                 ),
             )
+            self.build_model(test_data, model=self.checkpoint[key][0])
         else:
             test_data, test_loader = test_data
 
@@ -482,16 +493,15 @@ class Exp_crossformer(Exp_Basic):
             preds = np.concatenate(preds)
             trues = np.concatenate(trues)
             if run_metric:
-                    metric_fn = make_metric(self.ycat)
-                    metrics = metric_fn(preds, trues)
-                    mae, mse, rmse, mape, mspe, accr = metrics
-                    print_color(
-                        93,
-                        f"mae:{mae:.3f}, mse:{mse:.3f}, rmse:{rmse:.3f}, mape:{mape:.3f}, {'mspe' if accr==-1 else 'mdst'}:{mspe:.3f}, accr:{accr}",
-                    )
+                metric_fn = make_metric(self.ycat)
+                metrics = metric_fn(preds, trues)
+                mae, mse, rmse, mape, mspe, accr = metrics
+                print_color(
+                    93,
+                    f"mae:{mae:.3f}, mse:{mse:.3f}, rmse:{rmse:.3f}, mape:{mape:.3f}, {'mspe' if accr==-1 else 'mdst'}:{mspe:.3f}, accr:{accr}",
+                )
 
         return preds, trues, metrics
-
 
     def _process_one_batch(self, dataset_object, batch_x, batch_y, inverse=False):
         batch_x = [x.float().to(self.device) for x in batch_x]

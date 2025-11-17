@@ -129,26 +129,45 @@ class Exp_crossformer(Exp_Basic):
             assert input.shape[1] == 1
             tv, _ = target
             iv = input
+
             mi = torch.isnan(iv)
             mask = torch.isnan(tv) | mi
             valid_iv = iv[~mask]
             valid_tv = tv[~mask]
 
-            # Compute MSE
+            if valid_iv.numel() == 0:
+                return iv.sum() * 0.0
+
             diff = valid_iv - valid_tv
             mse_loss = diff.pow(2)
-            if self.args.over_weight > 0:
-                mse_loss = mse_loss + diff.clamp(min=0).pow(2) * self.args.over_weight
-            # Compute variance of predictions and targets
+
+            ow = getattr(self.args, "over_weight", 0.0)
+            if ow > 0:
+                mse_loss = mse_loss + diff.clamp(min=0).pow(2) * ow
+
+            mse_mean = mse_loss.mean()
+
             variance_tv = ((valid_tv - valid_tv.mean()).pow(2)).mean()
             variance_iv = ((valid_iv - valid_iv.mean()).pow(2)).mean()
 
-            # Variance loss (maximize variance matching)
-            variance_loss = (variance_iv - variance_tv).pow(2) + (
-                variance_tv / (1e-8 + variance_iv) - 1
-            ).pow(2) * match_lambda(variance_tv, 10)
-            loss = torch.log1p(mse_loss.mean() + weight * variance_loss)
+            eps = 1e-8
+            if not torch.isfinite(variance_tv):
+                variance_tv = variance_tv.new_tensor(0.0)
+            if not torch.isfinite(variance_iv) or variance_iv <= 0:
+                variance_iv = variance_iv.new_tensor(eps)
 
+            ratio = variance_tv / (variance_iv + eps)
+            variance_loss = (variance_iv - variance_tv).pow(2) + (ratio - 1.0).pow(
+                2
+            ) * match_lambda(variance_tv, 10.0)
+
+            base = mse_mean + weight * variance_loss
+            if not torch.isfinite(base):
+                base = torch.clamp(base, min=0.0)
+            else:
+                base = torch.clamp(base, min=0.0)
+
+            loss = torch.log1p(base) + mi.sum() / valid_tv.numel()
             return loss
 
         def cross_entropy_loss_with_nans(input, target):
@@ -207,7 +226,12 @@ class Exp_crossformer(Exp_Basic):
             mask_penalty = mc.sum() / target[0].numel()
 
             reg_loss = cross_mse_loss_with_nans(iv, target)
-            return cls_loss + mask_penalty + self.args.lambda_mse * reg_loss
+            return (
+                cls_loss
+                + mask_penalty
+                + self.args.lambda_mse * reg_loss
+                + mc.sum() / (tc.numel() + 1)
+            )
 
         return cross_entropy_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans
 
@@ -269,10 +293,15 @@ class Exp_crossformer(Exp_Basic):
                 model_optim.load_state_dict(checkpoint[0][1])
                 score = abs(checkpoint[1])
                 spoch = checkpoint[0][2]
+                if score != np.inf:
+                    vali_loss = self.vali(vali_data, vali_loader, criterion)
+                else:
+                    vali_loss = np.inf
                 print_color(
                     93,
-                    f"suc to load. score {score:.4g} epoch {spoch} from: {best_model_path}, version {version}",
+                    f"suc to load. score {score:.4g} vali {vali_loss:.4g} epoch {spoch} from: {best_model_path}, version {version}",
                 )
+                score = vali_loss
             except (
                 FileNotFoundError,
                 RuntimeError,
@@ -358,10 +387,7 @@ class Exp_crossformer(Exp_Basic):
                 ),
             )
             train_loss = np.average(train_loss)
-            if score:
-                vali_loss = self.vali(vali_data, vali_loader, criterion)
-            else:
-                vali_loss = np.inf
+            vali_loss = self.vali(vali_data, vali_loader, criterion)
             # test_loss = self.vali(test_data, test_loader, criterion)
 
             print(
@@ -502,7 +528,7 @@ class Exp_crossformer(Exp_Basic):
         ).to(self.device)
 
         if self.use_amp:
-            with torch.amp.autocast(device_type=self.device.type):
+            with torch.amp.autocast(device_type=self.device.type, dtype=torch.bfloat16):
                 outputs = self.model(batch_x)
         else:
             outputs = self.model(batch_x)
@@ -511,10 +537,25 @@ class Exp_crossformer(Exp_Basic):
         return outputs, batch_y
 
     def _inverse(self, dataset_object, outputs, batch_y):
+        if isinstance(outputs, torch.Tensor) and outputs.dtype == torch.bfloat16:
+            outputs = outputs.to(torch.float32)
+        if isinstance(batch_y, torch.Tensor) and batch_y.dtype == torch.bfloat16:
+            batch_y = batch_y.to(torch.float32)
+        elif isinstance(batch_y, tuple):
+            batch_y = tuple(
+                (
+                    t.to(torch.float32)
+                    if isinstance(t, torch.Tensor) and t.dtype == torch.bfloat16
+                    else t
+                )
+                for t in batch_y
+            )
+
         if dataset_object.ycat > 0:
             outputs[:, :, -dataset_object.ycat :] = F.softmax(
-                outputs[:, :, -dataset_object.ycat :], 2
+                outputs[:, :, -dataset_object.ycat :], dim=2
             )
+
         outputs = dataset_object.inverse_transform(outputs)
         batch_y = dataset_object.inverse_transform(batch_y)
         return outputs, batch_y

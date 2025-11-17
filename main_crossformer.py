@@ -175,14 +175,22 @@ for ii in range(args.itr):
 
     print(f">>>>>>>testing : {setting}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
     preds, trues, metrics = exp.test(
-        setting, "vols", True, data_path=[tables[0]], inverse=True,
+        setting,
+        "vols",
+        True,
+        data_path=[tables[0]],
+        inverse=True,
     )
     print(preds.shape, trues.shape, metrics)
 
     exp.train(setting, "prcs")
     for table in tables:
         preds, trues, metrics = exp.test(
-            setting, "prcs", True, data_path=[table], inverse=True,
+            setting,
+            "prcs",
+            True,
+            data_path=[table],
+            inverse=True,
         )
         print(preds.shape, trues.shape, metrics)
 

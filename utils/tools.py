@@ -61,6 +61,7 @@ class EarlyStopping:
             self.save_checkpoint(val_loss, model, path)
             self.counter = 0
             self.steps = 0
+            return True
 
     def adjust_learning_rate(self, optimizer):
         if self.adj:

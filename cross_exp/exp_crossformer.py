@@ -24,15 +24,14 @@ warnings.filterwarnings("ignore")
 
 
 def match_lambda(
-    v1: torch.Tensor,
-    v2: torch.Tensor,
-    eps: float = 1e-8,
-    beta: float = 1.0,
+    v1: torch.Tensor, v2: torch.Tensor, eps: float = 1e-8, base: float = 2.0
 ) -> torch.Tensor:
     v1 = torch.as_tensor(v1)
     v2 = torch.as_tensor(v2)
-    ratio = (v1 + eps) / (v2 + eps)
-    return ratio.pow(beta)
+    ratio = v1.detach() / (v2.detach() + eps)
+    log_ratio = torch.log(ratio)
+    quant = torch.floor(log_ratio / base) * base
+    return torch.exp(quant)
 
 
 class Exp_crossformer(Exp_Basic):
@@ -41,6 +40,14 @@ class Exp_crossformer(Exp_Basic):
         self.ycat = self.model = None
         self.checkpoint = {}
         self.args = args
+
+        self.use_amp = bool(
+            getattr(args, "use_amp", True) and self.device.type == "cuda"
+        )
+        if self.use_amp:
+            self.scaler = torch.amp.GradScaler(enabled=self.use_amp)
+        else:
+            self.scaler = None
 
     def build_model(self, data, model=None):
         if model is None:
@@ -122,50 +129,27 @@ class Exp_crossformer(Exp_Basic):
             assert input.shape[1] == 1
             tv, _ = target
             iv = input
-
             mi = torch.isnan(iv)
             mask = torch.isnan(tv) | mi
-
             valid_iv = iv[~mask]
             valid_tv = tv[~mask]
 
-            if valid_iv.numel() == 0:
-                return iv.sum() * 0.0
-
+            # Compute MSE
             diff = valid_iv - valid_tv
-            base_mse = diff.pow(2)
+            mse_loss = diff.pow(2)
+            if self.args.over_weight > 0:
+                mse_loss = mse_loss + diff.clamp(min=0).pow(2) * self.args.over_weight
+            # Compute variance of predictions and targets
+            variance_tv = ((valid_tv - valid_tv.mean()).pow(2)).mean()
+            variance_iv = ((valid_iv - valid_iv.mean()).pow(2)).mean()
 
-            over_weight = getattr(self.args, "over_weight", 0.0)
-            if over_weight > 0:
-                over_penalty = diff.clamp(min=0).pow(2) * over_weight
-                mse_loss = (base_mse + over_penalty).mean()
-            else:
-                mse_loss = base_mse.mean()
+            # Variance loss (maximize variance matching)
+            variance_loss = (variance_iv - variance_tv).pow(2) + (
+                variance_tv / (1e-8 + variance_iv) - 1
+            ).pow(2) * match_lambda(variance_tv, 10)
+            loss = torch.log1p(mse_loss.mean() + weight * variance_loss)
 
-            use_var_loss = getattr(self.args, "use_var_loss", False)
-            if use_var_loss:
-                variance_tv = ((valid_tv - valid_tv.mean()).pow(2)).mean()
-                variance_iv = ((valid_iv - valid_iv.mean()).pow(2)).mean()
-
-                eps = 1e-8
-                abs_term = (variance_iv - variance_tv).pow(2)
-                rel_term = ((variance_tv / (variance_iv + eps)) - 1.0).pow(2)
-
-                lambda_var = getattr(self.args, "lambda_var", 1.0)
-                beta = getattr(self.args, "lambda_var_beta", 1.0)
-
-                var_ratio = variance_tv / (variance_iv + eps)
-                dynamic_weight = match_lambda(
-                    variance_tv, variance_iv, eps=eps, beta=beta
-                )
-                var_loss = lambda_var * dynamic_weight * (abs_term + rel_term)
-            else:
-                var_loss = mse_loss * 0.0
-
-            reg_loss = mse_loss + var_loss
-            nan_penalty = mi.sum() / target[0].numel()
-
-            return reg_loss + nan_penalty
+            return loss
 
         def cross_entropy_loss_with_nans(input, target):
             assert input.shape[1] == 1
@@ -240,6 +224,7 @@ class Exp_crossformer(Exp_Basic):
         return total_loss
 
     def train(self, setting, data):
+        version = 251117
         checkpoint = data_split = None
         key = setting + data
         path = os.path.join(self.args.checkpoints, key)
@@ -286,8 +271,7 @@ class Exp_crossformer(Exp_Basic):
                 spoch = checkpoint[0][2]
                 print_color(
                     93,
-                    f"suc to load. score {score:.4g} epoch {spoch} from:",
-                    best_model_path,
+                    f"suc to load. score {score:.4g} epoch {spoch} from: {best_model_path}, version {version}",
                 )
             except (
                 FileNotFoundError,
@@ -295,7 +279,7 @@ class Exp_crossformer(Exp_Basic):
                 IndexError,
                 pickle.UnpicklingError,
             ) as e:
-                print_color(91, "failed to load", e, best_model_path)
+                print_color(91, f"version {version} failed to load", e, best_model_path)
         early_stopping = EarlyStopping(
             lradj=self.args.lradj,
             learning_rate=self.args.learning_rate,
@@ -333,8 +317,13 @@ class Exp_crossformer(Exp_Basic):
 
                 if not torch.isnan(loss).item():
                     train_loss.append(loss.item())
-                    loss.backward()
-                    model_optim.step()
+                    if self.use_amp:
+                        self.scaler.scale(loss).backward()
+                        self.scaler.step(model_optim)
+                        self.scaler.update()
+                    else:
+                        loss.backward()
+                        model_optim.step()
 
                 if getattr(self.args, "profile_mode", False):
                     prof.step()
@@ -509,8 +498,11 @@ class Exp_crossformer(Exp_Basic):
             torch.LongTensor
         ).to(self.device)
 
-        outputs = self.model(batch_x)
-
+        if self.use_amp:
+            with torch.amp.autocast(device_type=self.device.type):
+                outputs = self.model(batch_x)
+        else:
+            outputs = self.model(batch_x)
         if inverse:
             return self._inverse(dataset_object, outputs, batch_y)
         return outputs, batch_y

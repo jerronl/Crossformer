@@ -194,7 +194,7 @@ class DatasetMTS(Dataset):
 
             for table in self.data_path:
                 df = pd.read_csv(os.path.join(self.root_path, table)).replace(
-                    -99999, float("nan")
+                    -9999900, float("nan")
                 )
                 df = df[~df[dtm0].isna()]
                 if not cols["xvsp"] and "spot" in df.columns:

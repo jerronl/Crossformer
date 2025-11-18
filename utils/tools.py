@@ -141,7 +141,7 @@ def init_args():
     parser.add_argument(
         "--dist_alpha",
         type=float,
-        default=1.0,
+        default=3.0,
         help="distance decay factor for soft label (larger -> more peaked)",
     )
     parser.add_argument(

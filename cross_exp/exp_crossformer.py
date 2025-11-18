@@ -124,7 +124,46 @@ class Exp_crossformer(Exp_Basic):
             )
         return model_optim
 
-    def _select_criterion(self, ycat, weight):
+    def _select_criterion(self, ycat, lambda_var):
+        def regression_loss_with_nans(input, target):
+            assert input.shape[1] == 1
+            tv, _ = target
+            iv = input
+
+            mi = torch.isnan(iv)
+            mt = torch.isnan(tv)
+            mask = mi | mt
+
+            valid_iv = iv[~mask]
+            valid_tv = tv[~mask]
+
+            if valid_iv.numel() == 0:
+                return iv.sum() * 0.0
+
+            diff = valid_iv - valid_tv
+            mse = diff.pow(2).mean()
+
+            ow = getattr(self.args, "over_weight", 0.0)
+            if ow > 0:
+                mse = mse + ow * diff.clamp(min=0).pow(2).mean()
+
+            var_tv = (valid_tv - valid_tv.mean()).pow(2).mean()
+            var_iv = (valid_iv - valid_iv.mean()).pow(2).mean()
+
+            eps = 1e-8
+            var_tv = torch.clamp(var_tv, min=eps)
+            var_iv = torch.clamp(var_iv, min=eps)
+
+            log_var_tv = torch.log(var_tv)
+            log_var_iv = torch.log(var_iv)
+            var_loss = (log_var_iv - log_var_tv).pow(2)
+
+            lv = float(lambda_var) if lambda_var is not None else 0.0
+            reg_loss = mse + lv * var_loss
+
+            miss_penalty = mask.sum().float() / mask.numel()
+            return reg_loss + miss_penalty
+
         def cross_mse_loss_with_nans(input, target):
             assert input.shape[1] == 1
             tv, _ = target
@@ -149,7 +188,7 @@ class Exp_crossformer(Exp_Basic):
             ).pow(2) * match_lambda(variance_tv, 10)
 
             return (
-                (mse_loss.mean() + weight * variance_loss) ** 0.5
+                (mse_loss.mean() + lambda_var * variance_loss) ** 0.5
             ) * 10 + mi.sum() / target[0].numel()
 
         def cross_entropy_loss_with_nans(input, target):
@@ -170,7 +209,7 @@ class Exp_crossformer(Exp_Basic):
             device = ic_valid.device
             dtype = ic_valid.dtype
 
-            dist_alpha = getattr(self.args, "dist_alpha", 1.0)
+            dist_alpha = getattr(self.args, "dist_alpha", 3.0)
             W = getattr(self, "_class_soft_weights", None)
             if (
                 W is None
@@ -187,7 +226,7 @@ class Exp_crossformer(Exp_Basic):
             soft_targets = W.index_select(0, tc_valid)
 
             ce_per_sample = -(soft_targets * log_probs).sum(dim=1)
-            lambda_ce = getattr(self.args, "lambda_ce", 1.0)
+            lambda_ce = getattr(self.args, "lambda_ce", 2.0)
             ce_loss = lambda_ce * ce_per_sample.mean()
 
             use_expected_dist_penalty = getattr(
@@ -204,10 +243,16 @@ class Exp_crossformer(Exp_Basic):
             else:
                 dist_loss = ic_valid.sum() * 0.0
 
-            cls_loss = ce_loss + dist_loss
+            entropy = -(probs * log_probs).sum(dim=1).mean()
+            lambda_entropy = getattr(self.args, "lambda_entropy", 0.01)
+            entropy_loss = lambda_entropy * entropy
+
+            cls_loss = ce_loss + dist_loss + entropy_loss
+
             mask_penalty = mc.sum() / target[0].numel()
 
-            reg_loss = cross_mse_loss_with_nans(iv, target)
+            # reg_loss = cross_mse_loss_with_nans(iv, target)
+            reg_loss = regression_loss_with_nans(iv, target)
             return (
                 cls_loss
                 + mask_penalty
@@ -215,7 +260,8 @@ class Exp_crossformer(Exp_Basic):
                 + mc.sum() / (tc.numel() + 1)
             )
 
-        return cross_entropy_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans
+        return cross_entropy_loss_with_nans if ycat > 0 else regression_loss_with_nans
+        # return cross_entropy_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans
 
     def vali(self, vali_data, vali_loader, criterion):
         self.model.eval()
@@ -230,7 +276,7 @@ class Exp_crossformer(Exp_Basic):
         return total_loss
 
     def train(self, setting, data):
-        version = 251117
+        version = 251118
         checkpoint = data_split = None
         key = setting + data
         path = os.path.join(self.args.checkpoints, key)
@@ -264,7 +310,7 @@ class Exp_crossformer(Exp_Basic):
 
         model_optim = self._select_optimizer()
         criterion = self._select_criterion(self.ycat, self.args.weight)
-        score = None
+        score = np.inf
         spoch = 0
         if checkpoint is not None:
             try:
@@ -291,6 +337,25 @@ class Exp_crossformer(Exp_Basic):
                 pickle.UnpicklingError,
             ) as e:
                 print_color(91, f"version {version} failed to load", e, best_model_path)
+
+        if spoch < 1:
+            init_checkpoint = [
+                (
+                    self.state_dict(),
+                    model_optim.state_dict(),
+                    spoch,
+                    train_data.scaler,
+                    train_data.data_split,
+                ),
+                np.inf,
+            ]
+            best_model_path = path + "/" + "checkpoint.pth"
+            torch.save(init_checkpoint, best_model_path)
+
+        train_steps = len(train_loader)
+
+        model_optim = self._select_optimizer()
+
         early_stopping = EarlyStopping(
             lradj=self.args.lradj,
             learning_rate=self.args.learning_rate,
@@ -498,7 +563,7 @@ class Exp_crossformer(Exp_Basic):
                 mae, mse, rmse, mape, mspe, accr = metrics
                 print_color(
                     93,
-                    f"mae:{mae:.3f}, mse:{mse:.3f}, rmse:{rmse:.3f}, mape:{mape:.3f}, {'mspe' if accr==-1 else 'mdst'}:{mspe:.3f}, accr:{accr}",
+                    f"mae:{mae:.4g}, mse:{mse:.4g}, rmse:{rmse:.4g}, mape:{mape:.4g}, {'mspe' if accr==-1 else 'mdst'}:{mspe:.4g}, accr:{accr}",
                 )
 
         return preds, trues, metrics

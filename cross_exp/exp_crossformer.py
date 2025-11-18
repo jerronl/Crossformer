@@ -129,46 +129,28 @@ class Exp_crossformer(Exp_Basic):
             assert input.shape[1] == 1
             tv, _ = target
             iv = input
-
             mi = torch.isnan(iv)
             mask = torch.isnan(tv) | mi
             valid_iv = iv[~mask]
             valid_tv = tv[~mask]
 
-            if valid_iv.numel() == 0:
-                return iv.sum() * 0.0
-
+            # Compute MSE
             diff = valid_iv - valid_tv
             mse_loss = diff.pow(2)
-
-            ow = getattr(self.args, "over_weight", 0.0)
-            if ow > 0:
-                mse_loss = mse_loss + diff.clamp(min=0).pow(2) * ow
-
-            mse_mean = mse_loss.mean()
-
+            if self.args.over_weight > 0:
+                mse_loss = mse_loss + diff.clamp(min=0).pow(2) * self.args.over_weight
+            # Compute variance of predictions and targets
             variance_tv = ((valid_tv - valid_tv.mean()).pow(2)).mean()
             variance_iv = ((valid_iv - valid_iv.mean()).pow(2)).mean()
 
-            eps = 1e-8
-            if not torch.isfinite(variance_tv):
-                variance_tv = variance_tv.new_tensor(0.0)
-            if not torch.isfinite(variance_iv) or variance_iv <= 0:
-                variance_iv = variance_iv.new_tensor(eps)
+            # Variance loss (maximize variance matching)
+            variance_loss = (variance_iv - variance_tv).pow(2) + (
+                variance_tv / (1e-8 + variance_iv) - 1
+            ).pow(2) * match_lambda(variance_tv, 10)
 
-            ratio = variance_tv / (variance_iv + eps)
-            variance_loss = (variance_iv - variance_tv).pow(2) + (ratio - 1.0).pow(
-                2
-            ) * match_lambda(variance_tv, 10.0)
-
-            base = mse_mean + weight * variance_loss
-            if not torch.isfinite(base):
-                base = torch.clamp(base, min=0.0)
-            else:
-                base = torch.clamp(base, min=0.0)
-
-            loss = torch.log1p(base) + mi.sum() / valid_tv.numel()
-            return loss
+            return (
+                (mse_loss.mean() + weight * variance_loss) ** 0.5
+            ) * 10 + mi.sum() / target[0].numel()
 
         def cross_entropy_loss_with_nans(input, target):
             assert input.shape[1] == 1

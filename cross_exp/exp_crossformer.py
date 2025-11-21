@@ -1,6 +1,4 @@
 import os
-import sys
-import traceback
 import time
 import pickle
 
@@ -9,7 +7,7 @@ import numpy as np
 
 import torch.profiler
 import torch
-from torch import nn, optim
+from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
@@ -32,6 +30,99 @@ def match_lambda(
     log_ratio = torch.log(ratio)
     quant = torch.floor(log_ratio / base) * base
     return torch.exp(quant)
+
+
+class HybridLoss(nn.Module):
+    def __init__(self, args, ycat):
+        super().__init__()
+        self.args = args
+        self.ycat = ycat
+        self.register_buffer("class_weights", None)
+
+    def _ensure_class_weights(self, device, dtype):
+        if self.class_weights is None:
+            idx = torch.arange(self.ycat, device=device, dtype=dtype)
+            dist_alpha = getattr(self.args, "dist_alpha", 3.0)
+            dist_mat = (idx[:, None] - idx[None, :]).abs()
+            W = torch.exp(-dist_alpha * dist_mat)
+            W = W / W.sum(dim=1, keepdim=True)
+            self.class_weights = W
+        else:
+            # keep device/dtype aligned
+            if (self.class_weights.device != device) or (
+                self.class_weights.dtype != dtype
+            ):
+                self.class_weights = self.class_weights.to(device=device, dtype=dtype)
+        return self.class_weights
+
+    def regression_loss(self, pred, true):
+        pred = pred.squeeze(1)
+        true = true.squeeze(1)
+        mask = torch.isnan(pred) | torch.isnan(true)
+
+        pred = pred[~mask]
+        true = true[~mask]
+
+        if pred.numel() == 0:
+            return pred.sum() * 0.0
+
+        error = pred - true
+        over = torch.relu(error)
+        under = torch.relu(-error)
+
+        w_over = getattr(self.args, "weight_over", 3.0)
+        w_under = getattr(self.args, "weight_under", 1.0)
+
+        asym = w_over * over**2 + w_under * under**2
+        return asym.mean()
+
+    def classification_loss(self, logits, tc):
+        logits = logits.squeeze(1)  # [B,ycat]
+        tc = tc.squeeze(-1)  # [B]
+
+        mask = torch.isnan(logits).any(dim=1)
+        logits = logits[~mask]
+        tc = tc[~mask].long()
+
+        if logits.numel() == 0:
+            return logits.sum() * 0.0
+
+        log_probs = F.log_softmax(logits, dim=-1)
+        probs = log_probs.exp()
+
+        W = self._ensure_class_weights(logits.device, logits.dtype)
+        soft_targets = W.index_select(0, tc)
+
+        lambda_ce = getattr(self.args, "lambda_ce", 2.0)
+        ce = -(soft_targets * log_probs).sum(dim=1).mean() * lambda_ce
+
+        dist_loss = logits.sum() * 0.0
+        if getattr(self.args, "use_expected_dist_penalty", False):
+            idx = torch.arange(self.ycat, device=logits.device, dtype=logits.dtype)
+            dist = (idx[None, :] - tc[:, None]).abs()
+            expected_dist = (dist * probs).sum(dim=1)
+            lambda_dist = getattr(self.args, "lambda_dist", 0.0)
+            dist_loss = lambda_dist * expected_dist.mean()
+
+        lambda_entropy = getattr(self.args, "lambda_entropy", 0.01)
+        entropy = -(probs * log_probs).sum(dim=1).mean()
+        entropy_loss = lambda_entropy * entropy
+
+        return ce + dist_loss + entropy_loss
+
+    def forward(self, input, target):
+        tv, tc = target
+        if self.ycat == 0:
+            return self.regression_loss(input, tv)
+
+        iv = input[..., : -self.ycat]
+        ic = input[..., -self.ycat :]
+
+        reg = self.regression_loss(iv, tv)
+        cls = self.classification_loss(ic, tc)
+
+        lambda_mse = getattr(self.args, "lambda_mse", 1.0)
+        return cls + lambda_mse * reg
 
 
 class Exp_crossformer(Exp_Basic):
@@ -124,144 +215,8 @@ class Exp_crossformer(Exp_Basic):
             )
         return model_optim
 
-    def _select_criterion(self, ycat, lambda_var):
-        def regression_loss_with_nans(input, target):
-            assert input.shape[1] == 1
-            tv, _ = target
-            iv = input
-
-            mi = torch.isnan(iv)
-            mt = torch.isnan(tv)
-            mask = mi | mt
-
-            valid_iv = iv[~mask]
-            valid_tv = tv[~mask]
-
-            if valid_iv.numel() == 0:
-                return iv.sum() * 0.0
-
-            diff = valid_iv - valid_tv
-            mse = diff.pow(2).mean()
-
-            ow = getattr(self.args, "over_weight", 0.0)
-            if ow > 0:
-                mse = mse + ow * diff.clamp(min=0).pow(2).mean()
-
-            var_tv = (valid_tv - valid_tv.mean()).pow(2).mean()
-            var_iv = (valid_iv - valid_iv.mean()).pow(2).mean()
-
-            eps = 1e-8
-            var_tv = torch.clamp(var_tv, min=eps)
-            var_iv = torch.clamp(var_iv, min=eps)
-
-            log_var_tv = torch.log(var_tv)
-            log_var_iv = torch.log(var_iv)
-            var_loss = (log_var_iv - log_var_tv).pow(2)
-
-            lv = float(lambda_var) if lambda_var is not None else 0.0
-            reg_loss = mse + lv * var_loss
-
-            miss_penalty = mask.sum().float() / mask.numel()
-            return reg_loss + miss_penalty
-
-        def cross_mse_loss_with_nans(input, target):
-            assert input.shape[1] == 1
-            tv, _ = target
-            iv = input
-            mi = torch.isnan(iv)
-            mask = torch.isnan(tv) | mi
-            valid_iv = iv[~mask]
-            valid_tv = tv[~mask]
-
-            # Compute MSE
-            diff = valid_iv - valid_tv
-            mse_loss = diff.pow(2)
-            if self.args.over_weight > 0:
-                mse_loss = mse_loss + diff.clamp(min=0).pow(2) * self.args.over_weight
-            # Compute variance of predictions and targets
-            variance_tv = ((valid_tv - valid_tv.mean()).pow(2)).mean()
-            variance_iv = ((valid_iv - valid_iv.mean()).pow(2)).mean()
-
-            # Variance loss (maximize variance matching)
-            variance_loss = (variance_iv - variance_tv).pow(2) + (
-                variance_tv / (1e-8 + variance_iv) - 1
-            ).pow(2) * match_lambda(variance_tv, 10)
-
-            return (
-                (mse_loss.mean() + lambda_var * variance_loss) ** 0.5
-            ) * 10 + mi.sum() / target[0].numel()
-
-        def cross_entropy_loss_with_nans(input, target):
-            assert input.shape[1] == 1
-            _, tc = target
-
-            iv, ic = input[:, :, :-ycat], input[:, 0, -ycat:]
-            mc = torch.isnan(ic).any(dim=1)
-            if (~mc).sum() == 0:
-                return ic.sum() * 0.0
-
-            ic_valid = ic[~mc]
-            tc_valid = tc[~mc].long()
-            log_probs = F.log_softmax(ic_valid, dim=-1)
-            probs = log_probs.exp()
-            num_classes = log_probs.size(1)
-
-            device = ic_valid.device
-            dtype = ic_valid.dtype
-
-            dist_alpha = getattr(self.args, "dist_alpha", 3.0)
-            W = getattr(self, "_class_soft_weights", None)
-            if (
-                W is None
-                or W.size(0) != num_classes
-                or W.device != device
-                or W.dtype != dtype
-            ):
-                idx = torch.arange(num_classes, device=device, dtype=dtype)
-                dist_mat = (idx.view(-1, 1) - idx.view(1, -1)).abs()
-                W = torch.exp(-dist_alpha * dist_mat)
-                W = W / W.sum(dim=1, keepdim=True)
-                self._class_soft_weights = W
-
-            soft_targets = W.index_select(0, tc_valid)
-
-            ce_per_sample = -(soft_targets * log_probs).sum(dim=1)
-            lambda_ce = getattr(self.args, "lambda_ce", 2.0)
-            ce_loss = lambda_ce * ce_per_sample.mean()
-
-            use_expected_dist_penalty = getattr(
-                self.args, "use_expected_dist_penalty", False
-            )
-            if use_expected_dist_penalty:
-                class_idx = torch.arange(num_classes, device=device, dtype=dtype).view(
-                    1, -1
-                )
-                dist = (class_idx - tc_valid.view(-1, 1)).abs()
-                expected_dist = (dist * probs).sum(dim=1)
-                lambda_dist = getattr(self.args, "lambda_dist", 0.0)
-                dist_loss = lambda_dist * expected_dist.mean()
-            else:
-                dist_loss = ic_valid.sum() * 0.0
-
-            entropy = -(probs * log_probs).sum(dim=1).mean()
-            lambda_entropy = getattr(self.args, "lambda_entropy", 0.01)
-            entropy_loss = lambda_entropy * entropy
-
-            cls_loss = ce_loss + dist_loss + entropy_loss
-
-            mask_penalty = mc.sum() / target[0].numel()
-
-            # reg_loss = cross_mse_loss_with_nans(iv, target)
-            reg_loss = regression_loss_with_nans(iv, target)
-            return (
-                cls_loss
-                + mask_penalty
-                + self.args.lambda_mse * reg_loss
-                + mc.sum() / (tc.numel() + 1)
-            )
-
-        return cross_entropy_loss_with_nans if ycat > 0 else regression_loss_with_nans
-        # return cross_entropy_loss_with_nans if ycat > 0 else cross_mse_loss_with_nans
+    def _select_criterion(self):
+        return HybridLoss(self.args, self.ycat)
 
     def vali(self, vali_data, vali_loader, criterion):
         self.model.eval()
@@ -275,86 +230,126 @@ class Exp_crossformer(Exp_Basic):
         self.model.train()
         return total_loss
 
+    def _load_checkpoint_file(self, path):
+        try:
+            checkpoint = torch.load(path, weights_only=False)
+        except (
+            FileNotFoundError,
+            RuntimeError,
+            IndexError,
+            pickle.UnpicklingError,
+            ValueError,
+        ) as e:
+            return None
+
+        state = {}
+        if isinstance(checkpoint, list):
+            inner = checkpoint[0]
+            state["model_state"] = inner[0]
+            state["optimizer_state"] = inner[1]
+            state["epoch"] = inner[2]
+            state["scaler"] = inner[3]
+            state["data_split"] = inner[4]
+            state["score"] = checkpoint[1]
+        elif isinstance(checkpoint, dict):
+            state = checkpoint
+        else:
+            raise ValueError(f"Unknown checkpoint format at {path}")
+        return state
+
+    def _apply_checkpoint(self, state, model_optim=None, version=None, path=None):
+        if state is None:
+            return 0, np.inf
+
+        try:
+            state_dict = state["model_state"]
+
+            if "model.enc_pos_embedding" in state_dict:
+                self.load_state_dict(state_dict)
+            else:
+                self.model.load_state_dict(state_dict)
+
+            if model_optim is not None and "optimizer_state" in state:
+                model_optim.load_state_dict(state["optimizer_state"])
+
+            score = abs(state["score"])
+            epoch = state["epoch"]
+            return epoch, score
+
+        except Exception as e:
+            print_color(
+                91, f"version {version} failed to load state dict from {path}", e
+            )
+            return 0, np.inf
+
     def train(self, setting, data):
-        version = 251118
-        checkpoint = data_split = None
+        version = 25112112
+        checkpoint_state = None
+        data_split = None
         key = setting + data
         path = os.path.join(self.args.checkpoints, key)
+
         if not os.path.exists(path):
             os.makedirs(path)
+        best_model_path = path + "/" + "checkpoint.pth"
+
         if self.args.resume:
-            best_model_path = path + "/" + "checkpoint.pth"
-            try:
-                checkpoint = torch.load(best_model_path, weights_only=False)
-                if len(checkpoint) > 1:
-                    data_split = checkpoint[0][4]
-            except (
-                FileNotFoundError,
-                RuntimeError,
-                IndexError,
-                pickle.UnpicklingError,
-            ) as e:
-                print_color(91, "failed to load", e, best_model_path)
+            checkpoint_state = self._load_checkpoint_file(best_model_path)
+            if checkpoint_state is None:
+                print_color(
+                    91,
+                    "failed to load checkpoint during resume. Starting from scratch.",
+                    best_model_path,
+                )
+            else:
+                data_split = checkpoint_state.get("data_split")
+
         train_data, train_loader = self._get_data(
             flag="train", data=data, data_split=data_split
         )
         vali_data, vali_loader = self._get_data(
             flag="val", data=data, data_split=data_split
         )
-        # test_data, test_loader = self._get_data(
-        #     flag="test", data=data, data_split=data_split
-        # )
+
         self.build_model(train_data)
-
         train_steps = len(train_loader)
-
         model_optim = self._select_optimizer()
-        criterion = self._select_criterion(self.ycat, self.args.weight)
+        criterion = self._select_criterion()
+
         score = np.inf
-        spoch = 0
-        if checkpoint is not None:
-            try:
-                if "model.enc_pos_embedding" in checkpoint[0][0]:
-                    self.load_state_dict(checkpoint[0][0])
-                else:
-                    self.model.load_state_dict(checkpoint[0][0])
-                model_optim.load_state_dict(checkpoint[0][1])
-                score = abs(checkpoint[1])
-                spoch = checkpoint[0][2]
-                if score != np.inf:
-                    vali_loss = self.vali(vali_data, vali_loader, criterion)
-                else:
-                    vali_loss = np.inf
-                print_color(
-                    93,
-                    f"suc to load. score {score:.4g} vali {vali_loss:.4g} epoch {spoch} from: {best_model_path}, version {version}",
-                )
-                score = vali_loss
-            except (
-                FileNotFoundError,
-                RuntimeError,
-                IndexError,
-                pickle.UnpicklingError,
-            ) as e:
-                print_color(91, f"version {version} failed to load", e, best_model_path)
+        start_epoch = 0
 
-        if spoch < 1:
-            init_checkpoint = [
-                (
-                    self.state_dict(),
-                    model_optim.state_dict(),
-                    spoch,
-                    train_data.scaler,
-                    train_data.data_split,
-                ),
-                np.inf,
-            ]
-            best_model_path = path + "/" + "checkpoint.pth"
-            torch.save(init_checkpoint, best_model_path)
+        if checkpoint_state is not None:
+            start_epoch, score_loaded = self._apply_checkpoint(
+                checkpoint_state,
+                model_optim=model_optim,
+                version=version,
+                path=best_model_path,
+            )
+            score = score_loaded
 
-        train_steps = len(train_loader)
+            if score != np.inf:
+                vali_loss = self.vali(vali_data, vali_loader, criterion)
+            else:
+                vali_loss = np.inf
 
-        model_optim = self._select_optimizer()
+            score = vali_loss
+            print_color(
+                93,
+                f"suc to load. score {score:.4g} vali {vali_loss:.4g} epoch {start_epoch} from: {best_model_path}, version {version}",
+            )
+
+        if start_epoch < 1:
+            init_state = {
+                "model_state": self.model.state_dict(),
+                "optimizer_state": model_optim.state_dict(),
+                "epoch": start_epoch,
+                "scaler": train_data.scaler,
+                "data_split": train_data.data_split,
+                "score": np.inf,
+            }
+            torch.save(init_state, best_model_path)
+            print_color(94, f"init model saved to:", best_model_path)
 
         early_stopping = EarlyStopping(
             lradj=self.args.lradj,
@@ -363,6 +358,7 @@ class Exp_crossformer(Exp_Basic):
             verbose=True,
             best_score=score,
         )
+
         if getattr(self.args, "profile_mode", False):
             prof = torch.profiler.profile(
                 schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
@@ -377,7 +373,7 @@ class Exp_crossformer(Exp_Basic):
             )
             prof.__enter__()
 
-        for epoch in range(spoch, self.args.train_epochs):
+        for epoch in range(start_epoch, self.args.train_epochs):
             time_now = time.time()
             iter_count = 0
             train_loss = []
@@ -386,7 +382,6 @@ class Exp_crossformer(Exp_Basic):
             epoch_time = time.time()
             for i, (batch_x, batch_y) in enumerate(train_loader):
                 iter_count += 1
-
                 model_optim.zero_grad()
                 pred, true = self._process_one_batch(train_data, batch_x, batch_y)
                 loss = criterion(pred, true)
@@ -404,7 +399,7 @@ class Exp_crossformer(Exp_Basic):
                 if getattr(self.args, "profile_mode", False):
                     prof.step()
                     if i >= 10:
-                        break  # only profile a few batches
+                        break
 
                 if (i + 1) % 100 == 0:
                     print(
@@ -424,35 +419,34 @@ class Exp_crossformer(Exp_Basic):
                     iter_count = 0
                     time_now = time.time()
 
-            if self.args.profile_mode:
+            if getattr(self.args, "profile_mode", False):
                 prof.__exit__(None, None, None)
                 return
 
             print(
                 "Epoch: {} cost time: {:.4g}".format(
                     epoch + 1, time.time() - epoch_time
-                ),
+                )
             )
             train_loss = np.average(train_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
-            # test_loss = self.vali(test_data, test_loader, criterion)
 
             print(
                 f"Epoch: {epoch + 1}, Steps: {train_steps} | Train Loss: {train_loss:.4g} "
-                f"Vali Loss: {format_nested (vali_loss)} | "
-                # f"Test Loss: {format_nested( test_loss)}"
+                f"Vali Loss: {format_nested(vali_loss)}"
             )
 
-            if early_stopping(
-                vali_loss,
-                (
-                    self.state_dict(),
-                    model_optim.state_dict(),
-                    epoch + 1,
-                    train_data.scaler,
-                    train_data.data_split,
-                ),
-                path,
+            current_state = {
+                "model_state": self.model.state_dict(),
+                "optimizer_state": model_optim.state_dict(),
+                "epoch": epoch + 1,
+                "scaler": train_data.scaler,
+                "data_split": train_data.data_split,
+                "score": vali_loss,
+            }
+
+            if early_stopping(vali_loss, current_state, path) and getattr(
+                self.args, "metric_in_train", False
             ):
                 self.test(
                     setting,
@@ -461,30 +455,34 @@ class Exp_crossformer(Exp_Basic):
                     inverse=True,
                     test_data=(vali_data, vali_loader),
                 )
+
             if early_stopping.early_stop:
                 print_color(95, "Early stopping")
                 break
 
             if early_stopping.adjust_learning_rate(model_optim):
-                best_model_path = path + "/" + "checkpoint.pth"
-                checkpoint = list(torch.load(best_model_path, weights_only=False))
-                if "model.enc_pos_embedding" in checkpoint[0][0]:
-                    self.load_state_dict(checkpoint[0][0])
-                else:
-                    self.model.load_state_dict(checkpoint[0][0])
-                model_optim.load_state_dict(checkpoint[0][1])
+                best_state = self._load_checkpoint_file(best_model_path)
+                self._apply_checkpoint(
+                    best_state,
+                    model_optim=model_optim,
+                    version=version,
+                    path=best_model_path,
+                )
 
-        best_model_path = path + "/" + "checkpoint.pth"
-        checkpoint = list(torch.load(best_model_path, weights_only=False))
-        self.load_state_dict(checkpoint[0][0])
-        checkpoint[0] = list(checkpoint[0])
-        checkpoint[0][0] = self.state_dict()
-        torch.save(checkpoint, path + "/checkpoint.pth")
-        self.checkpoint[key] = (self.model, checkpoint[0][3], checkpoint[0][4])
-        torch.save(
-            self.checkpoint[key],
-            path + "/crossformer.pkl",
+        best_state = self._load_checkpoint_file(best_model_path)
+        self._apply_checkpoint(
+            best_state, model_optim=None, version=version, path=best_model_path
         )
+
+        best_state["model_state"] = self.model.state_dict()
+        torch.save(best_state, path + "/checkpoint.pth")
+
+        self.checkpoint[key] = (
+            self.model,
+            best_state["scaler"],
+            best_state["data_split"],
+        )
+        torch.save(self.checkpoint[key], path + "/crossformer.pkl")
 
         return self.model
 

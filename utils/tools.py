@@ -79,7 +79,7 @@ class EarlyStopping:
                 f"Validation loss decreased ({self.val_loss_min:.4g} --> {val_loss:.4g}).  Saving model ...",
             )
         torch.save(
-            (model, abs(val_loss)),
+            model,
             path + "/" + "checkpoint.pth",
         )
         self.val_loss_min = val_loss

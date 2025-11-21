@@ -198,7 +198,7 @@ class DatasetMTS(Dataset):
                 )
                 df = df[~df[dtm0].isna()]
                 if not cols["xvsp"] and "spot" in df.columns:
-                    df.drop(columns="spot")
+                    df.drop(columns="spot", inplace=True)
                 if self.query is not None or not cols["xvsp"]:
                     df["day"] = pd.to_datetime(df["date"].str.replace("#", "")).dt.date
                     df["horizon"] = df[f"{dtm0}_{self.in_len}"] - df[dtm0]

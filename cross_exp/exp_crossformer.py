@@ -390,10 +390,13 @@ class Exp_crossformer(Exp_Basic):
                     train_loss.append(loss.item())
                     if self.use_amp:
                         self.scaler.scale(loss).backward()
+                        self.scaler.unscale_(model_optim)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                         self.scaler.step(model_optim)
                         self.scaler.update()
                     else:
                         loss.backward()
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                         model_optim.step()
 
                 if getattr(self.args, "profile_mode", False):

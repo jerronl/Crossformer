@@ -287,35 +287,60 @@ def format_nested(data, fmt=".4g"):
         return f"{data:{fmt}}"
 
 
-def update_args(args, data_parser, itr, arg_set="vols"):
-    data_info = data_parser["vols"].copy()
-    if arg_set in data_parser.keys() and arg_set != "vols":
+def string_split(str_for_split):
+    str_no_space = str_for_split.replace(" ", "")
+    str_split = str_no_space.split(",")
+    value_list = [eval(x) for x in str_split]
+    return value_list
+
+
+def update_args(args, data_parser, itr, arg_set="vols", SWEEP_KEYS=[]):
+    data_info = data_parser.get("vols", {}).copy()
+    if arg_set in data_parser and arg_set != "vols":
         data_info.update(data_parser[arg_set])
         data_info["data"] = arg_set
+
     for k, v in data_info.items():
-        args.__setattr__(k, v)
+        setattr(args, k, v)
+
     if isinstance(args.data_split, str):
         args.data_split = string_split(args.data_split)
 
-    print("Args in experiment:")
-    print(args)
-
-    setting = (
-        "Crossformer_itr{}_il{}_ol{}_sl{}_win{}_fa{}_dm{}_nh{}_el{}_"
-        "wt{}_lmse{}_da{}_lvar{}"
-    ).format(
-        itr,
-        args.in_len,
-        args.out_len,
-        args.seg_len,
-        args.win_size,
-        args.factor,
-        args.d_model,
-        args.n_heads,
-        args.e_layers,
-        args.weight,
-        args.lambda_mse,
-        args.dist_alpha,
-        args.lambda_var,
+    # 1. Generate sweep_part from SWEEP_KEYS
+    sweep_part = "_".join(
+        f"{k}{getattr(args, k)}"
+        for k in SWEEP_KEYS
+        if hasattr(args, k) and getattr(args, k) is not None
     )
+
+    # 2. Define BASE setting template (必须与旧模型文件名保持一致，只到 lvar)
+    base_setting = (
+        "Crossformer_itr{itr}_il{il}_ol{ol}_sl{sl}_win{win}_fa{fa}_"
+        "dm{dm}_nh{nh}_el{el}_wt{wt}_lmse{lmse}_da{da}_lvar{lvar}"
+    )
+
+    # 3. Conditionally append the sweep part.
+    if sweep_part:
+        setting_template = base_setting + "_sw{sweep_part}"
+    else:
+        setting_template = base_setting
+
+    # 4. Format the string using required arguments
+    setting = setting_template.format(
+        itr=itr,
+        il=args.in_len,
+        ol=args.out_len,
+        sl=args.seg_len,
+        win=args.win_size,
+        fa=args.factor,
+        dm=args.d_model,
+        nh=args.n_heads,
+        el=args.e_layers,
+        wt=args.weight,
+        lmse=args.lambda_mse,
+        da=args.dist_alpha,
+        lvar=args.lambda_var,
+        **({"sweep_part": sweep_part} if sweep_part else {}),
+    )
+
     return setting

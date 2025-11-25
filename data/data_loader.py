@@ -177,9 +177,17 @@ class DatasetMTS(Dataset):
         self.data_dim, _, self.out_dim, self.ycat, self.sect, self.sp = self.data[1]
 
     def __read_data__(self):
-        if self.data_name + str(self.data_path) in self.datas:
-            self.data = self.__class__.datas[self.data_name + str(self.data_path)]
+        if isinstance(self.data_path, list):
+            path_key = tuple(self.data_path)
+        else:
+            path_key = self.data_path
+
+        cache_key = self.data_name + str(path_key)
+
+        if cache_key in self.datas:
+            self.data = self.__class__.datas[cache_key]
             return
+
         cols = data_columns(self.data_name)
         dtm0 = cols["dtm0"]
         df_raws = [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
@@ -330,7 +338,7 @@ class DatasetMTS(Dataset):
                 )
             ),
         ]
-        self.__class__.datas[self.data_name + str(self.data_path)] = self.data
+        self.__class__.datas[cache_key] = self.data
 
     def __getitem__(self, index):
         (

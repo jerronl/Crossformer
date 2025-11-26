@@ -103,7 +103,11 @@ def print_color(color, *args, **kwargs):
     print(*((f"\033[{color}m",) + args + ("\033[0m",)), **kwargs)
 
 
+_DEFAULT_ARGS_DICT = None
+
+
 def init_args():
+    global _DEFAULT_ARGS_DICT
     parser = argparse.ArgumentParser(description="CrossFormer")
 
     parser.add_argument("--data", type=str, default="vols", help="data")
@@ -132,7 +136,7 @@ def init_args():
     )
 
     parser.add_argument(
-        "--over_weight",
+        "--weight_over",
         type=float,
         default=0.05,
         help="extra weight for over-estimation in MSE",
@@ -261,6 +265,7 @@ def init_args():
     )
 
     args = parser.parse_args(args=[])
+    _DEFAULT_ARGS_DICT = args.__dict__.copy()
 
     args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
 
@@ -294,53 +299,79 @@ def string_split(str_for_split):
     return value_list
 
 
-def update_args(args, data_parser, itr, arg_set="vols", SWEEP_KEYS=[]):
+def update_args(args, data_parser, itr, arg_set="vols"):
+
     data_info = data_parser.get("vols", {}).copy()
     if arg_set in data_parser and arg_set != "vols":
         data_info.update(data_parser[arg_set])
         data_info["data"] = arg_set
-
     for k, v in data_info.items():
         setattr(args, k, v)
 
     if isinstance(args.data_split, str):
         args.data_split = string_split(args.data_split)
 
-    # 1. Generate sweep_part from SWEEP_KEYS
-    sweep_part = "_".join(
-        f"{k}{getattr(args, k)}"
-        for k in SWEEP_KEYS
-        if hasattr(args, k) and getattr(args, k) is not None
-    )
+    if _DEFAULT_ARGS_DICT is None:
+        from .tools import init_args as reinit_args
 
-    # 2. Define BASE setting template (必须与旧模型文件名保持一致，只到 lvar)
-    base_setting = (
-        "Crossformer_itr{itr}_il{il}_ol{ol}_sl{sl}_win{win}_fa{fa}_"
-        "dm{dm}_nh{nh}_el{el}_wt{wt}_lmse{lmse}_da{da}_lvar{lvar}"
-    )
+        reinit_args()
 
-    # 3. Conditionally append the sweep part.
+    default_args = _DEFAULT_ARGS_DICT
+
+    SWEEP_KEYS = []
+
+    EXCLUDE_KEYS = [
+        "data_split",
+        "checkpoints",
+        "data_path",
+        "devices",
+        "gpu",
+        "use_multi_gpu",
+        "root_path",
+        "optim",
+        "lradj",
+        "num_workers",
+        "save_pred",
+        "profile_mode",
+        "resume",
+        "query",
+        "data",
+        "use_gpu",
+        "itr",
+        "batch_size",
+        "learning_rate",
+        "patience",
+        "train_epochs",
+    ]
+
+    for k, default_v in default_args.items():
+        if k in EXCLUDE_KEYS:
+            continue
+
+        current_v = getattr(args, k, None)
+
+        if current_v is None and default_v is None:
+            continue
+
+        if isinstance(default_v, (list, tuple)):
+            if str(current_v) != str(default_v):
+                SWEEP_KEYS.append(k)
+        elif current_v != default_v:
+            SWEEP_KEYS.append(k)
+
+    sorted_sweep_keys = sorted(SWEEP_KEYS)
+    sweep_part = "_".join(f"{k}{getattr(args, k)}" for k in sorted_sweep_keys)
+
+    base_setting = "Cf_{data}_itr{itr}"
+
     if sweep_part:
-        setting_template = base_setting + "_sw{sweep_part}"
+        setting_template = base_setting + "_sw_" + sweep_part
     else:
         setting_template = base_setting
 
-    # 4. Format the string using required arguments
     setting = setting_template.format(
-        itr=itr,
-        il=args.in_len,
-        ol=args.out_len,
-        sl=args.seg_len,
-        win=args.win_size,
-        fa=args.factor,
-        dm=args.d_model,
-        nh=args.n_heads,
-        el=args.e_layers,
-        wt=args.weight,
-        lmse=args.lambda_mse,
-        da=args.dist_alpha,
-        lvar=args.lambda_var,
-        **({"sweep_part": sweep_part} if sweep_part else {}),
+        itr=args.itr,
+        data=args.data,
     )
 
     return setting

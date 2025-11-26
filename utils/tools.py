@@ -300,11 +300,9 @@ def string_split(str_for_split):
 
 
 def update_args(args, data_parser, itr, arg_set="vols"):
+    data_info = data_parser.get(arg_set, {}).copy()
+    data_info["data"] = arg_set
 
-    data_info = data_parser.get("vols", {}).copy()
-    if arg_set in data_parser and arg_set != "vols":
-        data_info.update(data_parser[arg_set])
-        data_info["data"] = arg_set
     for k, v in data_info.items():
         setattr(args, k, v)
 

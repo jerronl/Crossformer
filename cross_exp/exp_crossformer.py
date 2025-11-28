@@ -41,14 +41,18 @@ class HybridLoss(nn.Module):
 
     def _ensure_class_weights(self, device, dtype):
         if self.class_weights is None:
+            if self.ycat <= 0:
+                self.class_weights = None
+                return None
             idx = torch.arange(self.ycat, device=device, dtype=dtype)
-            dist_alpha = getattr(self.args, "dist_alpha", 3.0)
             dist_mat = (idx[:, None] - idx[None, :]).abs()
-            W = torch.exp(-dist_alpha * dist_mat)
+            max_diff = max(self.ycat - 1, 1)
+            dist_norm = dist_mat / max_diff
+            gamma = getattr(self.args, "dist_alpha", 3.0)
+            W = torch.exp(-gamma * dist_norm * dist_norm)
             W = W / W.sum(dim=1, keepdim=True)
             self.class_weights = W
         else:
-            # keep device/dtype aligned
             if (self.class_weights.device != device) or (
                 self.class_weights.dtype != dtype
             ):
@@ -59,31 +63,51 @@ class HybridLoss(nn.Module):
         pred = pred.squeeze(1)
         true = true.squeeze(1)
         mask = torch.isnan(pred) | torch.isnan(true)
-
         pred = pred[~mask]
         true = true[~mask]
-
         if pred.numel() == 0:
             return pred.sum() * 0.0
 
         error = pred - true
+        gain = getattr(self.args, "gain_reg", 1.0)
+        error = gain * error
+
         over = torch.relu(error)
         under = torch.relu(-error)
-
         w_over = getattr(self.args, "weight_over", 3.0)
         w_under = getattr(self.args, "weight_under", 1.0)
-
         asym = w_over * over**2 + w_under * under**2
-        return asym.mean()
+        asym_loss = asym.mean()
+
+        abs_err = error.abs()
+        if abs_err.numel() > 0:
+            median = abs_err.median()
+        else:
+            median = torch.tensor(0.0, device=abs_err.device, dtype=abs_err.dtype)
+        tail_k = getattr(self.args, "tail_k", 3.0)
+        tail_th = tail_k * (median + 1e-8)
+        tail = torch.relu(abs_err - tail_th)
+        lambda_tail = getattr(self.args, "lambda_tail", 0.0)
+        tail_loss = lambda_tail * (tail**2).mean()
+
+        lambda_anti = getattr(self.args, "lambda_anti", 0.0)
+        anti_term = torch.relu(-error * true)
+        anti_loss = lambda_anti * anti_term.mean()
+
+        q = getattr(self.args, "quantile", 0.5)
+        lambda_q = getattr(self.args, "lambda_quantile", 0.0)
+        e = error
+        q_loss = torch.max(q * e, (q - 1.0) * e).mean()
+        quantile_loss = lambda_q * q_loss
+
+        return asym_loss + tail_loss + anti_loss + quantile_loss
 
     def classification_loss(self, logits, tc):
-        logits = logits.squeeze(1)  # [B,ycat]
-        tc = tc.squeeze(-1)  # [B]
-
+        logits = logits.squeeze(1)
+        tc = tc.squeeze(-1)
         mask = torch.isnan(logits).any(dim=1)
         logits = logits[~mask]
         tc = tc[~mask].long()
-
         if logits.numel() == 0:
             return logits.sum() * 0.0
 
@@ -93,14 +117,17 @@ class HybridLoss(nn.Module):
         W = self._ensure_class_weights(logits.device, logits.dtype)
         soft_targets = W.index_select(0, tc)
 
-        lambda_ce = getattr(self.args, "lambda_ce", 2.0)
+        lambda_ce = getattr(self.args, "lambda_ce", 1.0)
         ce = -(soft_targets * log_probs).sum(dim=1).mean() * lambda_ce
 
         dist_loss = logits.sum() * 0.0
         if getattr(self.args, "use_expected_dist_penalty", False):
-            idx = torch.arange(self.ycat, device=logits.device, dtype=logits.dtype)
+            num_classes = logits.size(-1)
+            idx = torch.arange(num_classes, device=logits.device, dtype=logits.dtype)
             dist = (idx[None, :] - tc[:, None]).abs()
-            expected_dist = (dist * probs).sum(dim=1)
+            max_diff = max(num_classes - 1, 1)
+            dist_norm = dist / max_diff
+            expected_dist = (dist_norm * probs).sum(dim=1)
             lambda_dist = getattr(self.args, "lambda_dist", 0.0)
             dist_loss = lambda_dist * expected_dist.mean()
 
@@ -120,10 +147,8 @@ class HybridLoss(nn.Module):
 
         reg = self.regression_loss(iv, tv)
         cls = self.classification_loss(ic, tc)
-
         lambda_mse = getattr(self.args, "lambda_mse", 1.0)
         return cls + lambda_mse * reg
-
 
 class Exp_crossformer(Exp_Basic):
     def __init__(self, args):

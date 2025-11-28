@@ -138,8 +138,50 @@ def init_args():
     parser.add_argument(
         "--weight_over",
         type=float,
-        default=0.05,
+        default=1.5,
         help="extra weight for over-estimation in MSE",
+    )
+    parser.add_argument(
+        "--weight_under",
+        type=float,
+        default=1.0,
+        help="extra weight for under-estimation in MSE",
+    )
+    parser.add_argument(
+        "--gain_reg",
+        type=float,
+        default=1.0,
+        help="gain factor for regression error",
+    )
+    parser.add_argument(
+        "--tail_k",
+        type=float,
+        default=3.0,
+        help="threshold multiplier for tail loss",
+    )
+    parser.add_argument(
+        "--lambda_tail",
+        type=float,
+        default=0.0,
+        help="weight for tail loss",
+    )
+    parser.add_argument(
+        "--lambda_anti",
+        type=float,
+        default=0.0,
+        help="weight for anti-shrinkage loss",
+    )
+    parser.add_argument(
+        "--quantile",
+        type=float,
+        default=0.5,
+        help="quantile for quantile loss",
+    )
+    parser.add_argument(
+        "--lambda_quantile",
+        type=float,
+        default=0.0,
+        help="weight for quantile loss",
     )
 
     parser.add_argument(

@@ -43,11 +43,20 @@ def MSPE(pred, true):
 
 
 def fuzzy_accuracy(pred_logits, true_labels):
-    pred_class = np.argmax(pred_logits, axis=-1)
-    diff = np.abs(pred_class - true_labels)
-    score = np.where(diff == 0, 1.0, np.where(diff == 1, 0.25, 0.0))
-    return score.mean()
+    pred_class = np.argmax(pred_logits, axis=-1).astype(np.int64)
+    true_labels = true_labels.astype(np.int64)
 
+    diff = np.abs(pred_class - true_labels).astype(np.float64)
+
+    num_classes = pred_logits.shape[-1]
+    max_diff = max(num_classes - 1, 1)
+
+    x = diff / max_diff
+
+    gamma = np.log(100.0)
+    score = np.exp(-gamma * x * x)
+
+    return score.mean()
 
 def mean_bucket_distance(pred_logits, true_labels):
     pred_class = np.argmax(pred_logits, axis=-1)

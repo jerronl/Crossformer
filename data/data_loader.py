@@ -176,20 +176,7 @@ class DatasetMTS(Dataset):
         self.scaler = self.data[0]
         self.data_dim, _, self.out_dim, self.ycat, self.sect, self.sp = self.data[1]
 
-    def __read_data__(self):
-        if isinstance(self.data_path, list):
-            path_key = tuple(self.data_path)
-        else:
-            path_key = self.data_path
-
-        cache_key = self.data_name + str(path_key)
-
-        if cache_key in self.datas:
-            self.data = self.__class__.datas[cache_key]
-            return
-
-        cols = data_columns(self.data_name)
-        dtm0 = cols["dtm0"]
+    def _read_files_and_split(self, cols, dtm0):
         df_raws = [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
         if isinstance(self.data_path, pd.DataFrame):
             df_raws[self.set_type] = self.data_path
@@ -213,14 +200,25 @@ class DatasetMTS(Dataset):
                     lasttime = df.groupby(["day"])["date"].max().values
                     df = df[(df["date"].isin(lasttime)) & (df["horizon"] > 0)]
 
+                ds = None
                 if self.query is not None:
+                    is_oos_mode = "cutdate" in self.query or isinstance(
+                        self.data_path, pd.DataFrame
+                    )
+
                     df = df.query(self.query)
-                    ds = [0, 0, 0, len(df) - 1]
-                elif table in self.data_split and self.data_split[table][-1] < len(df):
-                    ds = self.data_split[table]
-                else:
-                    ds = (data_split * uniform(0.8, 0.9) * len(df)).astype(int)
-                    self.data_split[table] = ds
+
+                    if is_oos_mode:
+                        ds = [0, 0, 0, len(df) - 1]
+
+                if ds is None:
+                    if table in self.data_split and self.data_split[table][-1] < len(
+                        df
+                    ):
+                        ds = self.data_split[table]
+                    else:
+                        ds = (data_split * uniform(0.8, 0.9) * len(df)).astype(int)
+                        self.data_split[table] = ds
 
                 print(table, df["date"].iloc[ds])
                 df["date"] = np.vectorize(excel_date)(df["date"])
@@ -233,7 +231,10 @@ class DatasetMTS(Dataset):
                     )
                 i = 0 if ds[1] else self.set_type
                 df_raws[i] = pd.concat([df_raws[i], df.iloc[ds[-1] :]])
-        vy, vnp, vnpt, vpc, vvs, vpct, vsp, vspt = data_names(cols, self.in_len)
+        return df_raws
+
+    def _extract_initial_arrays(self, df_raws, cols, names):
+        vy, vnp, vnpt, vpc, vvs, vpct, vsp, vspt = names
         xnp, xpc, xvsp, xvs, y, cyclics, xsp = [[] for _ in range(7)]
         for i, df_raw in enumerate(df_raws):
             if len(df_raw.columns) < 1:
@@ -256,7 +257,9 @@ class DatasetMTS(Dataset):
                 or np.isnan(xnp[-1]).sum() == 0
                 and np.isnan(xpc[-1]).sum() == 0
             )
-        xs = [xnp, xsp, xpc, xvsp]
+        return xnp, xsp, xpc, xvsp, xvs, y, cyclics
+
+    def _prepare_scalers(self, xs, y, cols):
         y1 = len(cols["vml"])
         if self.scaler is None:
             scalers = [StandardScaler() for _ in xs] + [MixedStandardScaler(y1)]
@@ -265,15 +268,21 @@ class DatasetMTS(Dataset):
             scalers[i + 1].fit(y[0][0])
         else:
             scalers = self.scaler
+        return scalers
+
+    def _apply_transforms(self, df_raws, scalers, arrays, cols, names):
+        xnp, xsp, xpc, xvsp, xvs, y, cyclics = arrays
+        vy, vnp, vnpt, vpc, vvs, vpct, vsp, vspt = names
+        xs = [xnp, xsp, xpc, xvsp]
         ivs = [vnp.index(v) for v in vvs]
         idat = [vnp.index(v) for v in ["date"]]
         idatv = [vvs.index(v) for v in ["date"]]
         icyc = [[vnp.index(v) for v, c in cols["cyc"]], [c for v, c in cols["cyc"]]]
+
         for i, df_raw in enumerate(df_raws):
             if len(xnp[i]) < 1:
                 cyclics.append([])
                 xvs.append([])
-                # xvsp.append([])
             else:
                 c = np.concatenate(
                     cyclic_t(xnp[i][:, idat])
@@ -313,17 +322,51 @@ class DatasetMTS(Dataset):
                     and np.isnan(xvs[-1]).sum() == 0
                     and np.isnan(xvsp[-1]).sum() == 0
                 )
+        return xnp, xsp, xpc, xvsp, xvs, y, cyclics
+
+    def __read_data__(self):
+        if isinstance(self.data_path, list):
+            path_key = tuple(self.data_path)
+        else:
+            path_key = self.data_path
+
+        cache_key = (self.data_name, path_key)  # ✅ 更安全的缓存键
+
+        if cache_key in self.__class__.datas:
+            self.data = self.__class__.datas[cache_key]
+            return
+
+        cols = data_columns(self.data_name)
+        df_raws = self._read_files_and_split(cols, cols["dtm0"])
+
+        names = data_names(cols, self.in_len)
+        # ✅ 提前解包 names，避免后续 NameError
+        vy, vnp, vnpt, vpc, vvs, vpct, vsp, vspt = names
+
+        arrays = self._extract_initial_arrays(df_raws, cols, names)
+        xnp, xsp, xpc, xvsp, xvs, y, cyclics = arrays
+
+        xs = [xnp, xsp, xpc, xvsp]
+        scalers = self._prepare_scalers(xs, y, cols)
+
+        # ✅ 避免重复列举变量
+        arrays = self._apply_transforms(df_raws, scalers, arrays, cols, names)
+        xnp, xsp, xpc, xvsp, xvs, y, cyclics = arrays
+
+        # ✅ 确保 y[2] 存在（按需调整）
+        assert len(y) >= 3, "Expected at least 3 data splits (train/val/test)"
+
         self.data = [
             scalers,
             (
                 xnp[self.set_type].shape[2]
-                # + xsp[self.set_type].shape[2]
-                + cyclics[self.set_type].shape[2] + xpc[self.set_type].shape[2],
+                + cyclics[self.set_type].shape[2]
+                + xpc[self.set_type].shape[2],
                 xvs[self.set_type].shape[1] + xvsp[self.set_type].shape[1],
                 cols["ycat"] + y[2][0].shape[2],
                 cols["ycat"],
                 cols["sect"],
-                len(vsp) // cols["sect"],
+                len(vsp) // cols["sect"],  # ✅ 现在 vsp 已定义
             ),
             list(
                 zip(

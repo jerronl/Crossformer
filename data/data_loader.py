@@ -329,12 +329,12 @@ class DatasetMTS(Dataset):
         if isinstance(self.data_path, pd.DataFrame):
             df_raws = [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
             df_raws[self.set_type] = self.data_path
-            cache_key=None
+            cache_key = None
         else:
             if isinstance(self.data_path, list):
-                cache_key = tuple(self.data_path)
+                cache_key = tuple(self.data_path), self.data_name
             else:
-                cache_key = self.data_path
+                cache_key = self.data_path, self.data_name
 
             if cache_key in self.__class__.datas:
                 self.data = self.__class__.datas[cache_key]
@@ -366,7 +366,7 @@ class DatasetMTS(Dataset):
                 cols["ycat"] + y[2][0].shape[2],
                 cols["ycat"],
                 cols["sect"],
-                len(vsp) // cols["sect"],  
+                len(vsp) // cols["sect"],
             ),
             list(
                 zip(

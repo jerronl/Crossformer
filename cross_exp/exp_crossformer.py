@@ -150,15 +150,17 @@ class HybridLoss(nn.Module):
         lambda_mse = getattr(self.args, "lambda_mse", 1.0)
         return cls + lambda_mse * reg
 
+
 class Exp_crossformer(Exp_Basic):
     def __init__(self, args):
         super(Exp_crossformer, self).__init__(args)
         self.ycat = self.model = None
+        self.current_model_key = None
         self.checkpoint = {}
         self.args = args
 
         self.use_amp = bool(
-            getattr(args, "use_amp", True) and self.device.type == "cuda"
+            getattr(args, "use_amp", False) and self.device.type == "cuda"
         )
         if self.use_amp:
             self.scaler = torch.amp.GradScaler(enabled=self.use_amp)
@@ -511,6 +513,7 @@ class Exp_crossformer(Exp_Basic):
             best_state["data_split"],
         )
         torch.save(self.checkpoint[key], path + "/crossformer.pkl")
+        self.current_model_key = key
 
         return self.model
 
@@ -524,36 +527,56 @@ class Exp_crossformer(Exp_Basic):
         run_metric=True,
         test_data=None,
     ):
+
+        key = setting + data
+
+        if key not in self.checkpoint:
+            best_model_path = (
+                os.path.join(self.args.checkpoints, key) + "/crossformer.pkl"
+            )
+            try:
+                self.checkpoint[key] = torch.load(best_model_path, weights_only=False)
+                print_color(93, "suc to load", best_model_path)
+            except (
+                FileNotFoundError,
+                RuntimeError,
+                IndexError,
+                pickle.UnpicklingError,
+            ) as e:
+                print_color(91, "failed to load", e, best_model_path)
+
         if test_data is None:
-            key = setting + data
-            if key not in self.checkpoint:
-                best_model_path = (
-                    os.path.join(self.args.checkpoints, key) + "/crossformer.pkl"
-                )
-                try:
-                    self.checkpoint[key] = torch.load(
-                        best_model_path, weights_only=False
-                    )
-                    print_color(93, "suc to load", best_model_path)
-                except (
-                    FileNotFoundError,
-                    RuntimeError,
-                    IndexError,
-                    pickle.UnpicklingError,
-                ) as e:
-                    print_color(91, "failed to load", e, best_model_path)
+            scaler = (
+                self.checkpoint[key][1]
+                if key in self.checkpoint and len(self.checkpoint[key]) > 1
+                else None
+            )
+            data_split = (
+                self.checkpoint[key][2]
+                if key in self.checkpoint and len(self.checkpoint[key]) > 2
+                else None
+            )
+
             test_data, test_loader = self._get_data(
                 data=data,
                 flag="test",
-                scaler=self.checkpoint[key][1],
+                scaler=scaler,
                 data_path=data_path,
-                data_split=(
-                    self.checkpoint[key][2] if len(self.checkpoint[key]) > 2 else None
-                ),
+                data_split=data_split,
             )
-            self.build_model(test_data, model=self.checkpoint[key][0])
         else:
             test_data, test_loader = test_data
+
+        if self.model is None or self.current_model_key != key:
+            if key in self.checkpoint:
+                self.build_model(test_data, model=self.checkpoint[key][0])
+                self.current_model_key = key
+            else:
+                raise RuntimeError(
+                    f"Exp_crossformer.test() called with key='{key}', "
+                    f"but no model is available in checkpoint and self.model is None. "
+                    f"Please ensure train() has been run or checkpoint exists."
+                )
 
         self.model.eval()
 
@@ -589,7 +612,8 @@ class Exp_crossformer(Exp_Basic):
                 mae, mse, rmse, mape, mspe, accr = metrics
                 print_color(
                     93,
-                    f"mae:{mae:.4g}, mse:{mse:.4g}, rmse:{rmse:.4g}, mape:{mape:.4g}, {'mspe' if accr==-1 else 'mdst'}:{mspe:.4g}, accr:{accr}",
+                    f"mae:{mae:.4g}, mse:{mse:.4g}, rmse:{rmse:.4g}, "
+                    f"{'mspe' if accr==-1 else 'mdst'}:{mspe:.4g}, accr:{accr}",
                 )
 
         return preds, trues, metrics

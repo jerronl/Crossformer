@@ -325,22 +325,24 @@ class DatasetMTS(Dataset):
         return xnp, xsp, xpc, xvsp, xvs, y, cyclics
 
     def __read_data__(self):
-        if isinstance(self.data_path, list):
-            path_key = tuple(self.data_path)
-        else:
-            path_key = self.data_path
-
-        cache_key = (self.data_name, path_key)  # ✅ 更安全的缓存键
-
-        if cache_key in self.__class__.datas:
-            self.data = self.__class__.datas[cache_key]
-            return
-
         cols = data_columns(self.data_name)
-        df_raws = self._read_files_and_split(cols, cols["dtm0"])
+        if isinstance(self.data_path, pd.DataFrame):
+            df_raws = [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
+            df_raws[self.set_type] = self.data_path
+            cache_key=None
+        else:
+            if isinstance(self.data_path, list):
+                cache_key = tuple(self.data_path)
+            else:
+                cache_key = self.data_path
+
+            if cache_key in self.__class__.datas:
+                self.data = self.__class__.datas[cache_key]
+                return
+
+            df_raws = self._read_files_and_split(cols, cols["dtm0"])
 
         names = data_names(cols, self.in_len)
-        # ✅ 提前解包 names，避免后续 NameError
         vy, vnp, vnpt, vpc, vvs, vpct, vsp, vspt = names
 
         arrays = self._extract_initial_arrays(df_raws, cols, names)
@@ -349,11 +351,9 @@ class DatasetMTS(Dataset):
         xs = [xnp, xsp, xpc, xvsp]
         scalers = self._prepare_scalers(xs, y, cols)
 
-        # ✅ 避免重复列举变量
         arrays = self._apply_transforms(df_raws, scalers, arrays, cols, names)
         xnp, xsp, xpc, xvsp, xvs, y, cyclics = arrays
 
-        # ✅ 确保 y[2] 存在（按需调整）
         assert len(y) >= 3, "Expected at least 3 data splits (train/val/test)"
 
         self.data = [
@@ -366,7 +366,7 @@ class DatasetMTS(Dataset):
                 cols["ycat"] + y[2][0].shape[2],
                 cols["ycat"],
                 cols["sect"],
-                len(vsp) // cols["sect"],  # ✅ 现在 vsp 已定义
+                len(vsp) // cols["sect"],  
             ),
             list(
                 zip(
@@ -381,7 +381,8 @@ class DatasetMTS(Dataset):
                 )
             ),
         ]
-        self.__class__.datas[cache_key] = self.data
+        if cache_key is not None:
+            self.__class__.datas[cache_key] = self.data
 
     def __getitem__(self, index):
         (

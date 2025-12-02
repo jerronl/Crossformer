@@ -40,16 +40,22 @@ class HybridLoss(nn.Module):
         self.register_buffer("class_weights", None)
 
     def _ensure_class_weights(self, device, dtype):
+        if self.ycat <= 0:
+            return None
+
         if self.class_weights is None:
-            if self.ycat <= 0:
-                self.class_weights = None
-                return None
             idx = torch.arange(self.ycat, device=device, dtype=dtype)
             dist_mat = (idx[:, None] - idx[None, :]).abs()
-            max_diff = max(self.ycat - 1, 1)
-            dist_norm = dist_mat / max_diff
-            gamma = getattr(self.args, "dist_alpha", 3.0)
-            W = torch.exp(-gamma * dist_norm * dist_norm)
+
+            if getattr(self.args, "use_gaussian_class_weights", False):
+                max_diff = max(self.ycat - 1, 1)
+                dist_norm = dist_mat / max_diff
+                gamma = getattr(self.args, "dist_alpha", 3.0)
+                W = torch.exp(-gamma * dist_norm * dist_norm)
+            else:
+                alpha = getattr(self.args, "dist_alpha", 3.0)
+                W = torch.exp(-alpha * dist_mat)
+
             W = W / W.sum(dim=1, keepdim=True)
             self.class_weights = W
         else:
@@ -57,20 +63,22 @@ class HybridLoss(nn.Module):
                 self.class_weights.dtype != dtype
             ):
                 self.class_weights = self.class_weights.to(device=device, dtype=dtype)
+
         return self.class_weights
 
     def regression_loss(self, pred, true):
         pred = pred.squeeze(1)
         true = true.squeeze(1)
+
         mask = torch.isnan(pred) | torch.isnan(true)
         pred = pred[~mask]
         true = true[~mask]
+
         if pred.numel() == 0:
             return pred.sum() * 0.0
 
-        error = pred - true
         gain = getattr(self.args, "gain_reg", 1.0)
-        error = gain * error
+        error = gain * (pred - true)
 
         over = torch.relu(error)
         under = torch.relu(-error)
@@ -84,6 +92,7 @@ class HybridLoss(nn.Module):
             median = abs_err.median()
         else:
             median = torch.tensor(0.0, device=abs_err.device, dtype=abs_err.dtype)
+
         tail_k = getattr(self.args, "tail_k", 3.0)
         tail_th = tail_k * (median + 1e-8)
         tail = torch.relu(abs_err - tail_th)
@@ -105,9 +114,11 @@ class HybridLoss(nn.Module):
     def classification_loss(self, logits, tc):
         logits = logits.squeeze(1)
         tc = tc.squeeze(-1)
+
         mask = torch.isnan(logits).any(dim=1)
         logits = logits[~mask]
         tc = tc[~mask].long()
+
         if logits.numel() == 0:
             return logits.sum() * 0.0
 
@@ -115,9 +126,12 @@ class HybridLoss(nn.Module):
         probs = log_probs.exp()
 
         W = self._ensure_class_weights(logits.device, logits.dtype)
-        soft_targets = W.index_select(0, tc)
+        if W is not None:
+            soft_targets = W.index_select(0, tc)
+        else:
+            soft_targets = F.one_hot(tc, num_classes=logits.size(-1)).to(logits.dtype)
 
-        lambda_ce = getattr(self.args, "lambda_ce", 1.0)
+        lambda_ce = getattr(self.args, "lambda_ce", 2.0)
         ce = -(soft_targets * log_probs).sum(dim=1).mean() * lambda_ce
 
         dist_loss = logits.sum() * 0.0
@@ -125,9 +139,12 @@ class HybridLoss(nn.Module):
             num_classes = logits.size(-1)
             idx = torch.arange(num_classes, device=logits.device, dtype=logits.dtype)
             dist = (idx[None, :] - tc[:, None]).abs()
-            max_diff = max(num_classes - 1, 1)
-            dist_norm = dist / max_diff
-            expected_dist = (dist_norm * probs).sum(dim=1)
+
+            if getattr(self.args, "use_normalized_expected_dist", False):
+                max_diff = max(num_classes - 1, 1)
+                dist = dist / max_diff
+
+            expected_dist = (dist * probs).sum(dim=1)
             lambda_dist = getattr(self.args, "lambda_dist", 0.0)
             dist_loss = lambda_dist * expected_dist.mean()
 

@@ -384,19 +384,22 @@ def update_args(args, data_parser, itr, arg_set="vols"):
         "train_epochs",
     ]
 
-    for k, default_v in default_args.items():
+    for k, current_v in args.__dict__.items():
         if k in EXCLUDE_KEYS:
             continue
 
-        current_v = getattr(args, k, None)
+        if k in default_args:
+            default_v = default_args[k]
 
-        if current_v is None and default_v is None:
-            continue
+            if current_v is None and default_v is None:
+                continue
 
-        if isinstance(default_v, (list, tuple)):
-            if str(current_v) != str(default_v):
+            if isinstance(default_v, (list, tuple)):
+                if str(current_v) != str(default_v):
+                    SWEEP_KEYS.append(k)
+            elif current_v != default_v:
                 SWEEP_KEYS.append(k)
-        elif current_v != default_v:
+        elif current_v != 0:
             SWEEP_KEYS.append(k)
 
     sorted_sweep_keys = sorted(SWEEP_KEYS)

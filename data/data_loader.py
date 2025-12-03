@@ -10,7 +10,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.base import BaseEstimator, TransformerMixin
 import torch.nn.functional as F
 
-# from einops import rearrange
 from torch.utils.data import Dataset
 from data.data_def import data_columns, data_names
 
@@ -80,15 +79,12 @@ class MixedStandardScaler(BaseEstimator, TransformerMixin):
                 f"m = {self.m} exceeds number of features = {self.n_features_in_}"
             )
 
-        # 前 m 列分别标准化
         X_front = X[..., : self.m].reshape(-1, self.m)
         self.scaler_front.fit(X_front)
 
-        # 后 k-m 列整体 flatten 成一列
         X_rest = X[..., self.m :].reshape(-1, 1)
         self.scaler_rest.fit(X_rest)
 
-        # 保存参数
         self.front_mean_ = self.scaler_front.mean_
         self.front_scale_ = self.scaler_front.scale_
         self.rest_mean_ = self.scaler_rest.mean_[0]
@@ -104,13 +100,11 @@ class MixedStandardScaler(BaseEstimator, TransformerMixin):
 
         orig_shape = X.shape
 
-        # 标准化前 m 列
         X_front = X[..., : self.m].reshape(-1, self.m)
         X_front_scaled = self.scaler_front.transform(X_front).reshape(
             *orig_shape[:-1], self.m
         )
 
-        # 后面 flatten 标准化
         X_rest = X[..., self.m :].reshape(-1, 1)
         X_rest_scaled = self.scaler_rest.transform(X_rest).reshape(
             *orig_shape[:-1], self.n_features_in_ - self.m
@@ -163,7 +157,6 @@ class DatasetMTS(Dataset):
         type_map = {"train": 0, "val": 1, "test": 2}
         assert flag in type_map
         self.set_type = type_map[flag]
-        # info
         self.in_len = in_len
         self.root_path = root_path
         self.data_path = data_path
@@ -176,18 +169,129 @@ class DatasetMTS(Dataset):
         self.scaler = self.data[0]
         self.data_dim, _, self.out_dim, self.ycat, self.sect, self.sp = self.data[1]
 
+    def _get_files_signature(self):
+        if isinstance(self.data_path, pd.DataFrame):
+            return "dataframe_input"
+
+        file_list = (
+            self.data_path if isinstance(self.data_path, list) else [self.data_path]
+        )
+        sig = []
+        for file_name in file_list:
+            full_path = os.path.join(self.root_path, file_name)
+            if os.path.exists(full_path):
+                stat = os.stat(full_path)
+                sig.append((file_name, stat.st_size, stat.st_mtime))
+            else:
+                sig.append((file_name, "missing"))
+        return tuple(sig)
+
+    def _get_split_signature(self):
+        if isinstance(self.data_split, list):
+            return ("list", tuple(self.data_split))
+        elif isinstance(self.data_split, dict):
+            items = []
+            for k, v in self.data_split.items():
+                if isinstance(v, np.ndarray):
+                    v = tuple(v.tolist())
+                items.append((k, v))
+            return ("dict", tuple(sorted(items)))
+        return ("other", str(self.data_split))
+
+    def _get_cache_key(self):
+        return (
+            self._get_files_signature(),
+            self.data_name,
+            self._get_split_signature(),
+        )
+
+    def _check_cache_and_load(self):
+        if isinstance(self.data_path, pd.DataFrame):
+            return False, None
+
+        file_sig = self._get_files_signature()
+        split_sig = self._get_split_signature()
+        cache_key = (file_sig, self.data_name, split_sig)
+
+        if cache_key in self.__class__.datas:
+            self.data = self.__class__.datas[cache_key]
+            return True, cache_key
+
+        if isinstance(self.data_split, (list, type(None))):
+            target_ratios = (
+                self.data_split if self.data_split is not None else [0.7, 0.1, 0.2]
+            )
+
+            for key, data in list(self.__class__.datas.items()):
+                existing_file_sig, existing_data_name, existing_split_sig = key
+
+                if (
+                    existing_file_sig != file_sig
+                    or existing_data_name != self.data_name
+                ):
+                    continue
+
+                if existing_split_sig[0] != "dict":
+                    continue
+
+                dict_items = dict(existing_split_sig[1])
+
+                lengths = [d[0][0] for d in data[2]]
+                total_len = sum(lengths)
+
+                if total_len > 0:
+                    cached_ratios = [l / total_len for l in lengths]
+                    target_sum = sum(target_ratios)
+                    norm_target = [r / target_sum for r in target_ratios]
+
+                    is_match = len(cached_ratios) == len(norm_target)
+                    if is_match:
+                        for cr, tr in zip(cached_ratios, norm_target):
+                            if abs(cr - tr) > 0.001:
+                                is_match = False
+                                break
+
+                    if is_match:
+                        self.data = data
+                        restored_split = {}
+                        for k, v in existing_split_sig[1]:
+                            restored_split[k] = np.array(v)
+                        self.data_split = restored_split
+
+                        new_cache_key = (
+                            file_sig,
+                            self.data_name,
+                            ("dict", existing_split_sig[1]),
+                        )
+                        self.__class__.datas[new_cache_key] = data
+
+                        return True, new_cache_key
+
+        return False, cache_key
+
     def _read_files_and_split(self, cols, dtm0):
         df_raws = [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
         if isinstance(self.data_path, pd.DataFrame):
             df_raws[self.set_type] = self.data_path
         else:
             if isinstance(self.data_split, dict):
-                data_split = np.array([0, 0.7, 0.85, 1])
+                data_split_ratios = None
             else:
-                data_split = np.cumsum([0] + self.data_split)
+                data_split_ratios = np.cumsum(
+                    [0]
+                    + (
+                        self.data_split
+                        if self.data_split is not None
+                        else [0.7, 0.1, 0.2]
+                    )
+                )
                 self.data_split = {}
 
-            for table in self.data_path:
+            files_list = (
+                self.data_path if isinstance(self.data_path, list) else [self.data_path]
+            )
+
+            for table in files_list:
                 df = pd.read_csv(os.path.join(self.root_path, table)).replace(
                     -9999900, float("nan")
                 )
@@ -202,7 +306,7 @@ class DatasetMTS(Dataset):
 
                 ds = None
                 if self.query is not None:
-                    is_oos_mode = "cutdate" in self.query or isinstance(
+                    is_oos_mode = "date>" in self.query or isinstance(
                         self.data_path, pd.DataFrame
                     )
 
@@ -212,16 +316,23 @@ class DatasetMTS(Dataset):
                         ds = [0, 0, 0, len(df) - 1]
 
                 if ds is None:
-                    if table in self.data_split and self.data_split[table][-1] < len(
-                        df
-                    ):
+                    if table in self.data_split:
                         ds = self.data_split[table]
                     else:
-                        ds = (data_split * uniform(0.8, 0.9) * len(df)).astype(int)
+                        current_len = len(df)
+                        ds = (
+                            data_split_ratios * uniform(0.8, 0.9) * current_len
+                        ).astype(int)
                         self.data_split[table] = ds
+                try:
+                    print(
+                        f"{table} date at split: {df['date'].iloc[ds] if len(ds)>0 else 'N/A'}"
+                    )
+                except Exception as e:
+                    print(f"Error printing date at split for {table}: {e}")
 
-                print(table, df["date"].iloc[ds])
                 df["date"] = np.vectorize(excel_date)(df["date"])
+
                 for i, df_raw in enumerate(df_raws):
                     df_raws[i] = pd.concat(
                         [
@@ -229,8 +340,10 @@ class DatasetMTS(Dataset):
                             df.iloc[ds[i] : ds[i + 1]],
                         ]
                     )
+
                 i = 0 if ds[1] else self.set_type
                 df_raws[i] = pd.concat([df_raws[i], df.iloc[ds[-1] :]])
+
         return df_raws
 
     def _extract_initial_arrays(self, df_raws, cols, names):
@@ -326,18 +439,14 @@ class DatasetMTS(Dataset):
 
     def __read_data__(self):
         cols = data_columns(self.data_name)
+
         if isinstance(self.data_path, pd.DataFrame):
             df_raws = [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
             df_raws[self.set_type] = self.data_path
             cache_key = None
         else:
-            if isinstance(self.data_path, list):
-                cache_key = tuple(self.data_path), self.data_name
-            else:
-                cache_key = self.data_path, self.data_name
-
-            if cache_key in self.__class__.datas:
-                self.data = self.__class__.datas[cache_key]
+            cache_hit, cache_key = self._check_cache_and_load()
+            if cache_hit:
                 return
 
             df_raws = self._read_files_and_split(cols, cols["dtm0"])
@@ -382,7 +491,15 @@ class DatasetMTS(Dataset):
             ),
         ]
         if cache_key is not None:
-            self.__class__.datas[cache_key] = self.data
+            dict_items = []
+            for k, v in self.data_split.items():
+                if isinstance(v, np.ndarray):
+                    v = tuple(v.tolist())
+                dict_items.append((k, v))
+            dict_sig = ("dict", tuple(sorted(dict_items)))
+            dict_cache_key = (cache_key[0], cache_key[1], dict_sig)
+            if dict_cache_key != cache_key:
+                self.__class__.datas[dict_cache_key] = self.data
 
     def __getitem__(self, index):
         (

@@ -69,13 +69,11 @@ class HybridLoss(nn.Module):
     def regression_loss(self, pred, true):
         pred = pred.squeeze(1)
         true = true.squeeze(1)
+        tnum = true.numel()
 
         mask = torch.isnan(pred) | torch.isnan(true)
         pred = pred[~mask]
         true = true[~mask]
-
-        if pred.numel() == 0:
-            return pred.sum() * 0.0
 
         gain = getattr(self.args, "gain_reg", 1.0)
         error = gain * (pred - true)
@@ -109,13 +107,21 @@ class HybridLoss(nn.Module):
         q_loss = torch.max(q * e, (q - 1.0) * e).mean()
         quantile_loss = lambda_q * q_loss
 
-        return asym_loss + tail_loss + anti_loss + quantile_loss
+        return (
+            asym_loss
+            + tail_loss
+            + anti_loss
+            + quantile_loss
+            + mask.sum() / tnum * 100.0
+        )
 
     def classification_loss(self, logits, tc):
         logits = logits.squeeze(1)
         tc = tc.squeeze(-1)
+        tnum = tc.numel()
 
         mask = torch.isnan(logits).any(dim=1)
+
         logits = logits[~mask]
         tc = tc[~mask].long()
 
@@ -152,7 +158,60 @@ class HybridLoss(nn.Module):
         entropy = -(probs * log_probs).sum(dim=1).mean()
         entropy_loss = lambda_entropy * entropy
 
-        return ce + dist_loss + entropy_loss
+        lambda_smooth = getattr(self.args, "lambda_smooth", 0.0)
+        smooth_loss = logits.sum() * 0.0
+        if lambda_smooth > 0.0:
+            diff = probs[:, 1:] - probs[:, :-1]
+            smooth_loss = lambda_smooth * (diff * diff).mean()
+
+        lambda_mode = getattr(self.args, "lambda_mode", 0.0)
+        mode_loss = logits.sum() * 0.0
+        if lambda_mode > 0.0:
+            mode = probs.argmax(dim=-1)
+            mode_loss = lambda_mode * (mode.float() - tc.float()).abs().mean()
+
+        lambda_emd = getattr(self.args, "lambda_emd", 0.0)
+        emd_loss = logits.sum() * 0.0
+        if lambda_emd > 0.0:
+            num_classes = probs.size(-1)
+            cdf_pred = probs.cumsum(dim=-1)
+            onehot = F.one_hot(tc, num_classes=num_classes).to(probs.dtype)
+            cdf_true = onehot.cumsum(dim=-1)
+            emd_loss = lambda_emd * (cdf_pred - cdf_true).abs().mean()
+
+        lambda_sep = getattr(self.args, "lambda_sep", 0.0)
+        sep_loss = logits.sum() * 0.0
+        if lambda_sep > 0.0:
+            classes = tc.unique()
+            means = []
+            for c in classes:
+                mask_c = tc == c
+                if mask_c.sum() < 2:
+                    continue
+                means.append(probs[mask_c].mean(dim=0, keepdim=True))
+            if len(means) >= 2:
+                means = torch.cat(means, dim=0)
+                diffs = []
+                n = means.size(0)
+                for i in range(n):
+                    for j in range(i + 1, n):
+                        # 核心修改：在平方和内部增加 1e-8 防止数值溢出或梯度为 NaN
+                        d = ((means[i] - means[j]).pow(2).sum() + 1e-8).sqrt()
+                        diffs.append(d)
+                if diffs:
+                    sep = torch.stack(diffs).mean()
+                    sep_loss = -lambda_sep * sep
+
+        return (
+            ce
+            + dist_loss
+            + entropy_loss
+            + smooth_loss
+            + mode_loss
+            + emd_loss
+            + sep_loss
+            + mask.sum() / tnum * 100.0
+        )
 
     def forward(self, input, target):
         tv, tc = target
@@ -175,6 +234,7 @@ class Exp_crossformer(Exp_Basic):
         self.current_model_key = None
         self.checkpoint = {}
         self.args = args
+        self.epochs = -1
 
         self.use_amp = bool(
             getattr(args, "use_amp", False) and self.device.type == "cuda"
@@ -183,6 +243,9 @@ class Exp_crossformer(Exp_Basic):
             self.scaler = torch.amp.GradScaler(enabled=self.use_amp)
         else:
             self.scaler = None
+
+    def get_epochs(self):
+        return self.epochs
 
     def build_model(self, data, model=None):
         if model is None:
@@ -352,7 +415,7 @@ class Exp_crossformer(Exp_Basic):
             flag="train", data=data, data_split=data_split
         )
         vali_data, vali_loader = self._get_data(
-            flag="val", data=data, data_split=data_split
+            flag="val", data=data, data_split=train_data.data_split
         )
 
         self.build_model(train_data)
@@ -393,7 +456,7 @@ class Exp_crossformer(Exp_Basic):
                 "score": np.inf,
             }
             torch.save(init_state, best_model_path)
-            print_color(94, f"init model saved to:", best_model_path)
+            print_color(94, f"init model saved to:", best_model_path,train_data.data_split)
 
         early_stopping = EarlyStopping(
             lradj=self.args.lradj,
@@ -515,19 +578,35 @@ class Exp_crossformer(Exp_Basic):
                     version=version,
                     path=best_model_path,
                 )
+            self.epochs = epoch
 
         best_state = self._load_checkpoint_file(best_model_path)
         self._apply_checkpoint(
             best_state, model_optim=None, version=version, path=best_model_path
         )
 
-        best_state["model_state"] = self.model.state_dict()
+        if best_state is None:
+            print_color(
+                91, "Checkpoint loading failed, using final model state for saving."
+            )
+            best_state = {
+                "model_state": self.model.state_dict(),
+                "optimizer_state": {},
+                "epoch": self.epochs + 1,
+                "scaler": train_data.scaler,
+                "data_split": train_data.data_split,
+                "score": vali_loss if "vali_loss" in locals() else np.inf,
+            }
+        else:
+            best_state["model_state"] = self.model.state_dict()
+            best_state["data_split"] = train_data.data_split
         torch.save(best_state, path + "/checkpoint.pth")
 
         self.checkpoint[key] = (
             self.model,
             best_state["scaler"],
             best_state["data_split"],
+            best_state["epoch"],
         )
         torch.save(self.checkpoint[key], path + "/crossformer.pkl")
         self.current_model_key = key
@@ -595,8 +674,11 @@ class Exp_crossformer(Exp_Basic):
                     f"Please ensure train() has been run or checkpoint exists."
                 )
 
-        self.model.eval()
+        if self.checkpoint.get(key) is not None:
+            if len(self.checkpoint[key]) > 3:
+                self.epochs = self.checkpoint[key][3]
 
+        self.model.eval()
         preds = []
         trues = []
         metrics = None
@@ -624,13 +706,14 @@ class Exp_crossformer(Exp_Basic):
             preds = np.concatenate(preds)
             trues = np.concatenate(trues)
             if run_metric:
-                metric_fn = make_metric(self.ycat)
+                metric_fn, metric_names = make_metric(self.ycat)
                 metrics = metric_fn(preds, trues)
-                mae, mse, rmse, mape, mspe, accr = metrics
                 print_color(
                     93,
-                    f"mae:{mae:.4g}, mse:{mse:.4g}, rmse:{rmse:.4g}, "
-                    f"{'mspe' if accr==-1 else 'mdst'}:{mspe:.4g}, accr:{accr}",
+                    ", ".join(
+                        f"{name}:{value:.4g}"
+                        for name, value in zip(metric_names, metrics)
+                    ),
                 )
 
         return preds, trues, metrics

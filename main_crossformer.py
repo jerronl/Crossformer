@@ -144,6 +144,7 @@ data_parser = {
         "weight": 0.8,
         "root_path": mydrive,
         "step": 2,
+        "use_amp": True,
     },
 }
 results = []

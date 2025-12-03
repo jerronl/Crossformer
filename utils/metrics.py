@@ -1,6 +1,27 @@
 import numpy as np
 import torch
 
+metric_names = [
+    [
+        "mae",
+        "mse",
+        "rmse",
+        "mape",
+        "mspe",
+    ],
+    [
+        "mae",
+        "mse",
+        "rmse",
+        "rps",
+        "smooth",
+        "mode_err",
+        "emd",
+        "tail_err",
+        "class_sep",
+    ],
+]
+
 
 def to_numpy(x):
     if isinstance(x, np.ndarray):
@@ -49,58 +70,46 @@ def softmax(x, axis=-1):
     return exp / np.sum(exp, axis=axis, keepdims=True)
 
 
-def mean_bucket_distance(pred_logits, true_labels):
-    probs = softmax(pred_logits, axis=-1)
-    class_idx = np.arange(probs.shape[-1], dtype=np.float64)
-    expected = np.sum(probs * class_idx, axis=-1)
-    true_labels = true_labels.astype(np.float64)
-    diff = np.abs(expected - true_labels)
-    return diff.mean()
+def RPS(probs, true_labels):
+    n_classes = probs.shape[-1]
+    pred_cdf = np.cumsum(probs, axis=-1)
+    true_labels = true_labels.astype(int)
+    true_onehot = np.eye(n_classes)[true_labels]
+    true_cdf = np.cumsum(true_onehot, axis=-1)
+    rps = np.mean(np.sum((pred_cdf - true_cdf) ** 2, axis=-1))
+    return rps
 
 
-def balanced_mean_bucket_distance(pred_logits, true_labels, num_classes=None):
-    probs = softmax(pred_logits, axis=-1)
-    class_idx = np.arange(probs.shape[-1], dtype=np.float64)
-    expected = np.sum(probs * class_idx, axis=-1)
-    true_labels = true_labels.astype(np.float64)
+def class_separation(probs, true_labels, num_classes=None):
+    true_labels = true_labels.astype(int)
     if num_classes is None:
         num_classes = int(true_labels.max()) + 1
-    dists = []
-    for k in range(num_classes):
-        mask = true_labels == k
+    means = []
+    for c in range(num_classes):
+        mask = true_labels == c
         if not np.any(mask):
             continue
-        d_k = np.abs(expected[mask] - float(k)).mean()
-        dists.append(d_k)
-    if not dists:
+        means.append(probs[mask].mean(axis=0))
+    if len(means) < 2:
         return 0.0
-    return float(np.mean(dists))
-
-
-def balanced_within_one_accuracy(pred_logits, true_labels, num_classes=None):
-    probs = softmax(pred_logits, axis=-1)
-    class_idx = np.arange(probs.shape[-1], dtype=np.float64)
-    expected = np.sum(probs * class_idx, axis=-1)
-    true_labels = true_labels.astype(np.float64)
-    diff = np.abs(expected - true_labels)
-    if num_classes is None:
-        num_classes = int(true_labels.max()) + 1
-    acc_per_class = []
-    for k in range(num_classes):
-        mask = true_labels == k
-        if not np.any(mask):
-            continue
-        acc_k = (diff[mask] <= 1.0).mean()
-        acc_per_class.append(acc_k)
-    if not acc_per_class:
+    means = np.stack(means, axis=0)
+    diffs = []
+    n = means.shape[0]
+    for i in range(n):
+        for j in range(i + 1, n):
+            diff = means[i] - means[j]
+            cdf_diff = np.cumsum(diff)
+            d = np.mean(np.abs(cdf_diff))
+            diffs.append(d)
+    if not diffs:
         return 0.0
-    return float(np.mean(acc_per_class))
+    return float(np.mean(diffs))
 
 
 def make_metric(ycat):
     def metric_cat(pred, true):
         tv = to_numpy(true)
-        tc = to_numpy(true[:, 0])
+        tc = to_numpy(true[:, 0]).astype(int) - 1
         if isinstance(pred, np.ndarray):
             iv = pred[:, :-ycat]
             ic = pred[:, -ycat:]
@@ -113,13 +122,42 @@ def make_metric(ycat):
         mae = MAE(iv, tv)
         mse = MSE(iv, tv)
         rmse = RMSE(iv, tv)
-        mape = MAPE(iv, tv)
-        mbd_sample = mean_bucket_distance(ic, tc)
-        mbd_bal = balanced_mean_bucket_distance(ic, tc, num_classes=ycat)
-        alpha = 0.3
-        mbd = (1.0 - alpha) * mbd_sample + alpha * mbd_bal
-        accr = balanced_within_one_accuracy(ic, tc, num_classes=ycat)
-        return mae, mse, rmse, mape, mbd, accr
+        probs = softmax(ic, axis=-1)
+        rps = RPS(probs, tc)
+        diff = probs[:, 1:] - probs[:, :-1]
+        smooth = np.mean(diff * diff)
+        mode = probs.argmax(axis=-1)
+        mode_err = np.mean(np.abs(mode - tc))
+        n_classes = probs.shape[-1]
+        pred_cdf = np.cumsum(probs, axis=-1)
+        true_onehot = np.eye(n_classes)[tc]
+        true_cdf = np.cumsum(true_onehot, axis=-1)
+        emd = np.mean(np.abs(pred_cdf - true_cdf))
+        cols = np.arange(n_classes)[None, :]
+        tpos = tc[:, None]
+        left3 = np.clip(tpos - 3, 0, n_classes - 1)
+        right3 = np.clip(tpos + 3, 0, n_classes - 1)
+        center_mask = (cols >= left3) & (cols <= right3)
+        prob_center = (probs * center_mask).sum(axis=1)
+        tail_global = 1.0 - prob_center
+        left_mask = cols < (tpos - 1)
+        right_mask = cols > (tpos + 1)
+        left_mass = (probs * left_mask).sum(axis=1)
+        right_mass = (probs * right_mask).sum(axis=1)
+        tail_asym = np.abs(left_mass - right_mass)
+        tail_err = float(np.mean(tail_global + tail_asym))
+        class_sep = class_separation(probs, tc, num_classes=ycat)
+        return (
+            mae,
+            mse,
+            rmse,
+            rps,
+            smooth,
+            mode_err,
+            emd,
+            tail_err,
+            class_sep,
+        )
 
     def metric(pred, true):
         if isinstance(true, (tuple, list)):
@@ -133,6 +171,6 @@ def make_metric(ycat):
         rmse = RMSE(iv, tv)
         mape = MAPE(iv, tv)
         mspe = MSPE(iv, tv)
-        return mae, mse, rmse, mape, mspe, -1.0
+        return mae, mse, rmse, mape, mspe
 
-    return metric_cat if ycat > 0 else metric
+    return (metric_cat, metric_names[1]) if ycat > 0 else (metric, metric_names[0])

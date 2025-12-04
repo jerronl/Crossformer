@@ -390,7 +390,7 @@ class Exp_crossformer(Exp_Basic):
             return 0, np.inf
 
     def train(self, setting, data):
-        version = 25112112
+        version = 251203220
         checkpoint_state = None
         data_split = None
         key = setting + data
@@ -398,24 +398,23 @@ class Exp_crossformer(Exp_Basic):
 
         if not os.path.exists(path):
             os.makedirs(path)
-        best_model_path = path + "/" + "checkpoint.pth"
+        best_model_path = os.path.join(path, "checkpoint.pth")
 
         if self.args.resume:
             checkpoint_state = self._load_checkpoint_file(best_model_path)
             if checkpoint_state is None:
-                print_color(
-                    91,
-                    "failed to load checkpoint during resume. Starting from scratch.",
-                    best_model_path,
-                )
+                data_split = getattr(self.args, "data_split", None) or [0.7, 0.1, 0.2]
             else:
                 data_split = checkpoint_state.get("data_split")
 
         train_data, train_loader = self._get_data(
             flag="train", data=data, data_split=data_split
         )
+        if hasattr(train_data, "data_split"):
+            data_split = train_data.data_split
+
         vali_data, vali_loader = self._get_data(
-            flag="val", data=data, data_split=train_data.data_split
+            flag="val", data=data, data_split=data_split
         )
 
         self.build_model(train_data)
@@ -434,17 +433,9 @@ class Exp_crossformer(Exp_Basic):
                 path=best_model_path,
             )
             score = score_loaded
-
             if score != np.inf:
                 vali_loss = self.vali(vali_data, vali_loader, criterion)
-            else:
-                vali_loss = np.inf
-
-            score = vali_loss
-            print_color(
-                93,
-                f"suc to load. score {score:.4g} vali {vali_loss:.4g} epoch {start_epoch} from: {best_model_path}, version {version}",
-            )
+                score = vali_loss
 
         if start_epoch < 1:
             init_state = {
@@ -456,7 +447,6 @@ class Exp_crossformer(Exp_Basic):
                 "score": np.inf,
             }
             torch.save(init_state, best_model_path)
-            print_color(94, f"init model saved to:", best_model_path,train_data.data_split)
 
         early_stopping = EarlyStopping(
             lradj=self.args.lradj,
@@ -600,7 +590,7 @@ class Exp_crossformer(Exp_Basic):
         else:
             best_state["model_state"] = self.model.state_dict()
             best_state["data_split"] = train_data.data_split
-        torch.save(best_state, path + "/checkpoint.pth")
+        torch.save(best_state, best_model_path)
 
         self.checkpoint[key] = (
             self.model,

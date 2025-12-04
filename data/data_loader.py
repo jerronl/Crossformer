@@ -12,6 +12,7 @@ import torch.nn.functional as F
 
 from torch.utils.data import Dataset
 from data.data_def import data_columns, data_names
+from utils.tools import print_color
 
 warnings.filterwarnings("ignore")
 
@@ -215,57 +216,42 @@ class DatasetMTS(Dataset):
 
         if cache_key in self.__class__.datas:
             self.data = self.__class__.datas[cache_key]
+
             return True, cache_key
 
-        if isinstance(self.data_split, (list, type(None))):
-            target_ratios = (
-                self.data_split if self.data_split is not None else [0.7, 0.1, 0.2]
-            )
+        if split_sig[0] == "list":
+            target_ratios = list(split_sig[1])
+            total_ratio = sum(target_ratios)
+            if total_ratio <= 0:
+                return False, cache_key
+            norm_target = [r / total_ratio for r in target_ratios]
 
-            for key, data in list(self.__class__.datas.items()):
-                existing_file_sig, existing_data_name, existing_split_sig = key
+            for existing_key, cached_data in self.__class__.datas.items():
+                ex_file_sig, ex_data_name, ex_split_sig = existing_key
 
-                if (
-                    existing_file_sig != file_sig
-                    or existing_data_name != self.data_name
-                ):
+                if ex_data_name != self.data_name or ex_file_sig != file_sig:
+                    continue
+                if ex_split_sig[0] != "dict":
                     continue
 
-                if existing_split_sig[0] != "dict":
+                try:
+                    cached_lengths = [d[1].shape[0] for d in cached_data[2]]
+                    total_len = sum(cached_lengths)
+                    if total_len == 0:
+                        continue
+                    cached_ratios = [l / total_len for l in cached_lengths]
+                except Exception:
                     continue
 
-                dict_items = dict(existing_split_sig[1])
-
-                lengths = [d[0][0] for d in data[2]]
-                total_len = sum(lengths)
-
-                if total_len > 0:
-                    cached_ratios = [l / total_len for l in lengths]
-                    target_sum = sum(target_ratios)
-                    norm_target = [r / target_sum for r in target_ratios]
-
-                    is_match = len(cached_ratios) == len(norm_target)
-                    if is_match:
-                        for cr, tr in zip(cached_ratios, norm_target):
-                            if abs(cr - tr) > 0.001:
-                                is_match = False
-                                break
-
-                    if is_match:
-                        self.data = data
-                        restored_split = {}
-                        for k, v in existing_split_sig[1]:
-                            restored_split[k] = np.array(v)
+                if len(cached_ratios) == len(norm_target):
+                    if all(
+                        abs(c - t) <= 0.05 for c, t in zip(cached_ratios, norm_target)
+                    ):
+                        self.data = cached_data
+                        restored_split = {k: np.array(v) for k, v in ex_split_sig[1]}
                         self.data_split = restored_split
-
-                        new_cache_key = (
-                            file_sig,
-                            self.data_name,
-                            ("dict", existing_split_sig[1]),
-                        )
-                        self.__class__.datas[new_cache_key] = data
-
-                        return True, new_cache_key
+                        self.__class__.datas[cache_key] = self.data
+                        return True, cache_key
 
         return False, cache_key
 
@@ -274,6 +260,7 @@ class DatasetMTS(Dataset):
         if isinstance(self.data_path, pd.DataFrame):
             df_raws[self.set_type] = self.data_path
         else:
+            use_random_factor = False
             if isinstance(self.data_split, dict):
                 data_split_ratios = None
             else:
@@ -286,6 +273,7 @@ class DatasetMTS(Dataset):
                     )
                 )
                 self.data_split = {}
+                use_random_factor = True
 
             files_list = (
                 self.data_path if isinstance(self.data_path, list) else [self.data_path]
@@ -320,9 +308,12 @@ class DatasetMTS(Dataset):
                         ds = self.data_split[table]
                     else:
                         current_len = len(df)
-                        ds = (
-                            data_split_ratios * uniform(0.8, 0.9) * current_len
-                        ).astype(int)
+                        if use_random_factor:
+                            ds = (
+                                data_split_ratios * uniform(0.8, 0.9) * current_len
+                            ).astype(int)
+                        else:
+                            ds = (data_split_ratios * current_len).astype(int)
                         self.data_split[table] = ds
                 try:
                     print(
@@ -441,29 +432,25 @@ class DatasetMTS(Dataset):
         cols = data_columns(self.data_name)
 
         if isinstance(self.data_path, pd.DataFrame):
-            df_raws = [pd.DataFrame(), pd.DataFrame(), pd.DataFrame()]
+            df_raws = [pd.DataFrame() for _ in range(3)]
             df_raws[self.set_type] = self.data_path
             cache_key = None
         else:
             cache_hit, cache_key = self._check_cache_and_load()
             if cache_hit:
                 return
-
             df_raws = self._read_files_and_split(cols, cols["dtm0"])
 
         names = data_names(cols, self.in_len)
-        vy, vnp, vnpt, vpc, vvs, vpct, vsp, vspt = names
-
         arrays = self._extract_initial_arrays(df_raws, cols, names)
         xnp, xsp, xpc, xvsp, xvs, y, cyclics = arrays
 
         xs = [xnp, xsp, xpc, xvsp]
         scalers = self._prepare_scalers(xs, y, cols)
-
         arrays = self._apply_transforms(df_raws, scalers, arrays, cols, names)
         xnp, xsp, xpc, xvsp, xvs, y, cyclics = arrays
 
-        assert len(y) >= 3, "Expected at least 3 data splits (train/val/test)"
+        assert len(y) >= 3
 
         self.data = [
             scalers,
@@ -475,31 +462,27 @@ class DatasetMTS(Dataset):
                 cols["ycat"] + y[2][0].shape[2],
                 cols["ycat"],
                 cols["sect"],
-                len(vsp) // cols["sect"],
+                len(names[6]) // cols["sect"],
             ),
-            list(
-                zip(
-                    [x.shape for x in xnp],
-                    xnp,
-                    xsp,
-                    cyclics,
-                    xpc,
-                    xvs,
-                    xvsp,
-                    y,
-                )
-            ),
+            list(zip([x.shape for x in xnp], xnp, xsp, cyclics, xpc, xvs, xvsp, y)),
         ]
+
         if cache_key is not None:
-            dict_items = []
-            for k, v in self.data_split.items():
-                if isinstance(v, np.ndarray):
-                    v = tuple(v.tolist())
-                dict_items.append((k, v))
-            dict_sig = ("dict", tuple(sorted(dict_items)))
-            dict_cache_key = (cache_key[0], cache_key[1], dict_sig)
-            if dict_cache_key != cache_key:
-                self.__class__.datas[dict_cache_key] = self.data
+            self.__class__.datas[cache_key] = self.data
+
+            if isinstance(self.data_split, dict):
+                dict_items = []
+                for k, v in self.data_split.items():
+                    val = tuple(v.tolist()) if isinstance(v, np.ndarray) else v
+                    dict_items.append((k, val))
+                dict_sig = ("dict", tuple(sorted(dict_items)))
+                dict_cache_key = (cache_key[0], cache_key[1], dict_sig)
+
+                if dict_cache_key != cache_key:
+                    self.__class__.datas[dict_cache_key] = self.data
+                    print_color(
+                        92, "[CACHE UPDATE] Auto-registered corresponding Dict key."
+                    )
 
     def __getitem__(self, index):
         (

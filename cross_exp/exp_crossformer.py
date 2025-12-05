@@ -404,14 +404,18 @@ class Exp_crossformer(Exp_Basic):
             checkpoint_state = self._load_checkpoint_file(best_model_path)
             if checkpoint_state is None:
                 data_split = getattr(self.args, "data_split", None) or [0.7, 0.1, 0.2]
+                print_color(
+                    91,
+                    "failed to load checkpoint during resume. Starting from scratch.",
+                    best_model_path,
+                )
             else:
                 data_split = checkpoint_state.get("data_split")
 
         train_data, train_loader = self._get_data(
             flag="train", data=data, data_split=data_split
         )
-        if hasattr(train_data, "data_split"):
-            data_split = train_data.data_split
+        data_split = train_data.data_split
 
         vali_data, vali_loader = self._get_data(
             flag="val", data=data, data_split=data_split
@@ -436,8 +440,15 @@ class Exp_crossformer(Exp_Basic):
             if score != np.inf:
                 vali_loss = self.vali(vali_data, vali_loader, criterion)
                 score = vali_loss
+                print_color(
+                    93,
+                    f"suc to load. score {score:.4g} vali {vali_loss:.4g} epoch {start_epoch} from: {best_model_path}, version {version}",
+                )
 
         if start_epoch < 1:
+            assert isinstance(
+                train_data.data_split, dict
+            ), "data_split must be a dict after loading data"
             init_state = {
                 "model_state": self.model.state_dict(),
                 "optimizer_state": model_optim.state_dict(),
@@ -447,6 +458,9 @@ class Exp_crossformer(Exp_Basic):
                 "score": np.inf,
             }
             torch.save(init_state, best_model_path)
+            print_color(
+                94, f"init model saved to:{best_model_path}\n{init_state['data_split']}"
+            )
 
         early_stopping = EarlyStopping(
             lradj=self.args.lradj,
@@ -590,6 +604,8 @@ class Exp_crossformer(Exp_Basic):
         else:
             best_state["model_state"] = self.model.state_dict()
             best_state["data_split"] = train_data.data_split
+        print_color(94, f"final model saved {best_state['data_split']}")
+
         torch.save(best_state, best_model_path)
 
         self.checkpoint[key] = (

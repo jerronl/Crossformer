@@ -352,9 +352,7 @@ def update_args(args, data_parser, itr, arg_set="vols"):
         args.data_split = string_split(args.data_split)
 
     if _DEFAULT_ARGS_DICT is None:
-        from .tools import init_args as reinit_args
-
-        reinit_args()
+        init_args()
 
     default_args = _DEFAULT_ARGS_DICT
 

@@ -403,16 +403,9 @@ def update_args(args, data_parser, itr, arg_set="vols"):
     sorted_sweep_keys = sorted(SWEEP_KEYS)
     sweep_part = "_".join(f"{k}{getattr(args, k)}" for k in sorted_sweep_keys)
 
-    base_setting = "Cf_{data}_itr{itr}"
+    base_setting = f"Cf_{args.data}_itr{itr}"
 
     if sweep_part:
-        setting_template = base_setting + "_sw_" + sweep_part
+        return base_setting + "_sw_" + sweep_part
     else:
-        setting_template = base_setting
-
-    setting = setting_template.format(
-        itr=args.itr,
-        data=args.data,
-    )
-
-    return setting
+        return base_setting

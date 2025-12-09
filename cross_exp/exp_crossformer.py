@@ -276,6 +276,9 @@ class Exp_crossformer(Exp_Basic):
 
     def _get_data(self, flag, data=None, data_path=None, scaler=None, data_split=None):
         args = self.args
+        target_data = data or args.data
+        if target_data and not target_data[-1].isdigit():
+            target_data = target_data + "0"
 
         if flag == "test":
             shuffle_flag = False
@@ -288,7 +291,7 @@ class Exp_crossformer(Exp_Basic):
         data_set = DatasetMTS(
             root_path=args.root_path,
             data_path=data_path if data_path is not None else args.data_path,
-            data_name=data or args.data,
+            data_name=target_data,
             flag=flag,
             in_len=args.in_len,
             data_split=data_split or args.data_split,
@@ -604,6 +607,7 @@ class Exp_crossformer(Exp_Basic):
         else:
             best_state["model_state"] = self.model.state_dict()
             best_state["data_split"] = train_data.data_split
+            self.epochs = best_state["epoch"]
         print_color(94, f"final model saved {best_state['data_split']}")
 
         torch.save(best_state, best_model_path)

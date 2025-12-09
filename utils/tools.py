@@ -380,6 +380,7 @@ def update_args(args, data_parser, itr, arg_set="vols"):
         "learning_rate",
         "patience",
         "train_epochs",
+        "use_amp",
     ]
 
     for k, current_v in args.__dict__.items():

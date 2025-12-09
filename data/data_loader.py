@@ -144,6 +144,8 @@ class DatasetMTS(Dataset):
     ):
         if data_split is None:
             data_split = [0.7, 0.1, 0.2]
+        if data_name and not data_name[-1].isdigit():
+            data_name = data_name + "0"
         type_map = {"train": 0, "val": 1, "test": 2}
         assert flag in type_map
         self.set_type = type_map[flag]
@@ -441,7 +443,7 @@ class DatasetMTS(Dataset):
         return xnp, xsp, xpc, xvsp, xvs, y, cyclics
 
     def __read_data__(self):
-        cols = data_columns(self.data_name)
+        cols = data_columns(self.data_name[:-1])
         if isinstance(self.data_path, pd.DataFrame):
             df_raws = [pd.DataFrame() for _ in range(3)]
             df_raws[self.set_type] = self.data_path

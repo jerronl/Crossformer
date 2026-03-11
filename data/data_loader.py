@@ -9,6 +9,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from data.data_def import data_columns, data_names
+from data.data_quality import read_csv_with_check
 from utils.tools import print_color
 
 warnings.filterwarnings("ignore")
@@ -141,6 +142,7 @@ class DatasetMTS(Dataset):
         data_split=None,
         query=False,
         scaler=None,
+        verbose=False,
     ):
         if data_split is None:
             data_split = [0.7, 0.1, 0.2]
@@ -156,6 +158,7 @@ class DatasetMTS(Dataset):
         self.data_name = data_name
         self.query = query
         self.scaler = scaler
+        self.verbose = verbose
         self.__read_data__()
         self.shape = self.data[2][self.set_type][0]
         self.scaler = self.data[0]
@@ -264,8 +267,14 @@ class DatasetMTS(Dataset):
                 self.data_path if isinstance(self.data_path, list) else [self.data_path]
             )
             for table in files_list:
-                df = pd.read_csv(os.path.join(self.root_path, table)).replace(
-                    -9999900, float("nan")
+                df = read_csv_with_check(
+                    os.path.join(self.root_path, table),
+                    dtm0=dtm0,
+                    required_cols=["date", dtm0, "close", "hi", "lo"],
+                    price_cols=["close", "hi", "lo", "spot"],
+                    nan_sentinel=-9999900,
+                    raise_on_error=True,
+                    verbose=self.verbose,
                 )
                 df = df[~df[dtm0].isna()]
                 if not cols["xvsp"] and "spot" in df.columns:
